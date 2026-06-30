@@ -119,6 +119,16 @@ img.qimg{max-width:100%;max-height:240px;border-radius:var(--radius);display:blo
       <h2 style="font-size:15px">Resume a session</h2>
       <div id="my-sessions-list" class="mt1"><p class="sub">Loading…</p></div>
     </div>
+    <div class="card">
+      <h2 style="font-size:15px">Your quiz library</h2>
+      <p class="sub">Enter a shared passphrase to access quizzes saved under it — from any device.</p>
+      <label class="mt1">Passphrase</label>
+      <div class="row">
+        <input type="text" id="library-passphrase" placeholder="e.g. our-team-quizzes" style="flex:1"/>
+        <button class="sml" onclick="unlockLibrary()">Unlock</button>
+      </div>
+      <div id="library-status" style="font-size:13px;color:var(--text-muted);margin-top:8px"></div>
+    </div>
   </div>
 
   <!-- HOST MAIN -->

@@ -301,44 +301,164 @@ function saveQ(i){
   if(msg){ msg.textContent='Saved!'; setTimeout(()=>{ if(msg) msg.textContent=''; }, 1800); }
 }
 
-// ── SAVE / LOAD QUIZ (stored locally in browser, per-host) ───────────────
+// ── SAVE / LOAD QUIZ — shared library, scoped by a passphrase ────────────
+// Quizzes are stored in Firebase under savedQuizzes/{passphraseHash}/...
+// so anyone who enters the same passphrase, on any device, sees the same
+// library. If no passphrase has been unlocked, we fall back to a private
+// per-browser localStorage library so the feature still works solo.
+
+let libraryPassphraseHash = null; // null = no shared library unlocked yet
+
+// simple, non-cryptographic hash — good enough to scope a Firebase path,
+// not intended as real security
+async function hashPassphrase(text){
+  const normalized = text.trim().toLowerCase();
+  if(window.crypto && window.crypto.subtle){
+    try{
+      const enc = new TextEncoder().encode(normalized);
+      const buf = await crypto.subtle.digest('SHA-256', enc);
+      return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('').slice(0,32);
+    } catch(e){ /* fall through to simple hash below */ }
+  }
+  // fallback for non-HTTPS contexts where crypto.subtle is unavailable
+  let h = 0;
+  for(let i=0; i<normalized.length; i++){ h = ((h<<5)-h+normalized.charCodeAt(i))|0; }
+  return 'h'+Math.abs(h).toString(16);
+}
+
+async function unlockLibrary(){
+  const input = document.getElementById('library-passphrase');
+  const status = document.getElementById('library-status');
+  const phrase = (input.value||'').trim();
+  if(!phrase){
+    libraryPassphraseHash = null;
+    status.textContent = 'No passphrase set — saved quizzes will only be available on this device.';
+    status.style.color = 'var(--text-muted)';
+    return;
+  }
+  status.textContent = 'Unlocking…';
+  try{
+    libraryPassphraseHash = await hashPassphrase(phrase);
+    localStorage.setItem('quiz_library_passphrase', phrase); // remember on this device so it persists across reloads
+    const snap = await db.ref('savedQuizzes/'+libraryPassphraseHash).get();
+    const count = snap.exists() ? Object.keys(snap.val()).length : 0;
+    status.textContent = `Unlocked — ${count} saved quiz${count!==1?'zes':''} found for this passphrase.`;
+    status.style.color = 'var(--success)';
+  } catch(e){
+    console.error('unlockLibrary failed', e);
+    status.textContent = 'Could not reach the database — check your connection.';
+    status.style.color = 'var(--danger)';
+  }
+}
+
+// restore a previously-used passphrase automatically on page load
+window.addEventListener('DOMContentLoaded', async ()=>{
+  const saved = localStorage.getItem('quiz_library_passphrase');
+  if(saved){
+    const input = document.getElementById('library-passphrase');
+    if(input) input.value = saved;
+    try{ libraryPassphraseHash = await hashPassphrase(saved); } catch(e){}
+  }
+});
+
 function showSaveModal(){
   document.getElementById('modal-save').style.display='flex';
   document.getElementById('save-name').value='';
-  document.getElementById('save-err').textContent='';
+  const err = document.getElementById('save-err');
+  err.textContent = libraryPassphraseHash
+    ? ''
+    : 'No passphrase unlocked — this will save to this device only. Set a passphrase in "Your quiz library" to share across devices.';
+  err.style.color = libraryPassphraseHash ? 'var(--danger)' : 'var(--text-muted)';
   setTimeout(()=>document.getElementById('save-name').focus(),50);
 }
 function showLoadModal(){
   document.getElementById('modal-load').style.display='flex';
   renderSavedList();
 }
-function doSaveQuiz(){
+
+async function doSaveQuiz(){
   const name = (document.getElementById('save-name').value||'').trim();
-  if(!name){ document.getElementById('save-err').textContent='Enter a name'; return; }
-  if(!localQs.length){ document.getElementById('save-err').textContent='No questions to save'; return; }
-  const all = JSON.parse(localStorage.getItem('quiz_saved_quizzes')||'{}');
-  all[name] = { questions: JSON.parse(JSON.stringify(localQs)), saved: new Date().toLocaleString() };
-  localStorage.setItem('quiz_saved_quizzes', JSON.stringify(all));
-  closeModal('modal-save');
-  showToast(`"${name}" saved`);
+  const err = document.getElementById('save-err');
+  if(!name){ err.textContent='Enter a name'; err.style.color='var(--danger)'; return; }
+  if(!localQs.length){ err.textContent='No questions to save'; err.style.color='var(--danger)'; return; }
+
+  const entry = { questions: JSON.parse(JSON.stringify(localQs)), saved: new Date().toLocaleString() };
+
+  if(libraryPassphraseHash){
+    try{
+      await db.ref(`savedQuizzes/${libraryPassphraseHash}/${encodeKey(name)}`).set(entry);
+      closeModal('modal-save');
+      showToast(`"${name}" saved to shared library`);
+    } catch(e){
+      console.error('doSaveQuiz (shared) failed', e);
+      err.textContent = 'Could not save to the shared library: ' + (e.message||e);
+      err.style.color = 'var(--danger)';
+    }
+  } else {
+    const all = JSON.parse(localStorage.getItem('quiz_saved_quizzes')||'{}');
+    all[name] = entry;
+    localStorage.setItem('quiz_saved_quizzes', JSON.stringify(all));
+    closeModal('modal-save');
+    showToast(`"${name}" saved to this device`);
+  }
 }
-function renderSavedList(){
+
+// Firebase keys can't contain ".", "#", "$", "[", "]", or "/" — sanitize quiz names into safe keys
+function encodeKey(name){
+  return encodeURIComponent(name).replace(/\./g,'%2E');
+}
+
+async function renderSavedList(){
   const el = document.getElementById('quiz-list-modal');
-  const all = JSON.parse(localStorage.getItem('quiz_saved_quizzes')||'{}');
+  el.innerHTML = '<p class="sub">Loading…</p>';
+
+  if(libraryPassphraseHash){
+    try{
+      const snap = await db.ref('savedQuizzes/'+libraryPassphraseHash).get();
+      const all = snap.exists() ? snap.val() : {};
+      renderSavedListInto(el, all, true);
+    } catch(e){
+      console.error('renderSavedList (shared) failed', e);
+      el.innerHTML = '<p class="sub" style="color:var(--danger)">Could not load the shared library: '+(e.message||e)+'</p>';
+    }
+  } else {
+    const all = JSON.parse(localStorage.getItem('quiz_saved_quizzes')||'{}');
+    renderSavedListInto(el, all, false);
+  }
+}
+
+function renderSavedListInto(el, all, isShared){
   const names = Object.keys(all);
-  if(!names.length){ el.innerHTML = '<p class="sub">No saved quizzes yet.</p>'; return; }
   el.innerHTML = '';
-  names.forEach(name=>{
-    const entry = all[name];
+  if(isShared){
+    const hint = mk('p','sub'); hint.style.marginBottom='8px';
+    hint.textContent = 'Showing quizzes saved under your current passphrase.';
+    el.appendChild(hint);
+  }
+  if(!names.length){
+    const empty = mk('p','sub'); empty.textContent='No saved quizzes yet.'; el.appendChild(empty); return;
+  }
+  names.forEach(rawName=>{
+    const name = isShared ? decodeURIComponent(rawName.replace(/%2E/g,'.')) : rawName;
+    const entry = all[rawName];
     const row = mk('div'); row.style.cssText='display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--border)';
     const info = mk('div'); info.style.flex='1';
     info.innerHTML = `<div style="font-weight:500">${name}</div><div style="font-size:12px;color:var(--text-muted)">${entry.questions.length} questions · ${entry.saved}</div>`;
     const lb = mk('button','sml pri'); lb.textContent='Load'; lb.onclick=()=>loadQuiz(name, entry);
-    const db_ = mk('button','sml'); db_.style.color='var(--danger)'; db_.textContent='Delete';
-    db_.onclick = ()=>{ delete all[name]; localStorage.setItem('quiz_saved_quizzes', JSON.stringify(all)); renderSavedList(); };
-    row.appendChild(info); row.appendChild(lb); row.appendChild(db_); el.appendChild(row);
+    const delBtn = mk('button','sml'); delBtn.style.color='var(--danger)'; delBtn.textContent='Delete';
+    delBtn.onclick = async ()=>{
+      if(isShared){
+        await db.ref(`savedQuizzes/${libraryPassphraseHash}/${rawName}`).remove();
+      } else {
+        delete all[rawName];
+        localStorage.setItem('quiz_saved_quizzes', JSON.stringify(all));
+      }
+      renderSavedList();
+    };
+    row.appendChild(info); row.appendChild(lb); row.appendChild(delBtn); el.appendChild(row);
   });
 }
+
 function loadQuiz(name, entry){
   localQs = JSON.parse(JSON.stringify(entry.questions));
   selQ = null;
