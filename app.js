@@ -715,6 +715,9 @@ async function doNext(){
   s.currentQ++;
   s.revealAnswers = false;
   s.questionStartedAt = Date.now();
+  // reset timer guards so the new question's timer starts fresh on all devices
+  lastHostTimerQ = -1;
+  lastTimerQ = -1;
   await sessionRef.set(s);
 }
 
@@ -887,6 +890,11 @@ function attachSessionListener(code){
     s.answers = s.answers || {};
 
     if(role==='host'){
+      // reset auto-reveal guard when question changes so a new quiz or new
+      // question at index 0 isn't blocked by a prior run's fired state
+      if(s.currentQ !== lastHostTimerQ && !s.revealAnswers){
+        autoRevealFiredForQ = -1;
+      }
       if(activeHostTab==='run') renderRunPanel(true);
       else if(activeHostTab==='lb') renderLB('h-lb', null);
       const pb = document.getElementById('ht-pbadge');
@@ -894,6 +902,11 @@ function attachSessionListener(code){
       if(pb){ if(pcount>0){ pb.style.display='inline'; pb.textContent=pcount; } else pb.style.display='none'; }
       if(document.getElementById('modal-code').style.display==='flex') updateCodeModal();
     } else if(role==='participant'){
+      // if the question has changed, reset the timer guard so the new
+      // question's countdown starts fresh regardless of prior state
+      if(s.currentQ !== lastTimerQ && !s.revealAnswers){
+        lastTimerQ = -1;
+      }
       const ps = document.getElementById('p-sync'); if(ps){ ps.textContent='● live'; ps.style.color='var(--success)'; }
       renderPView();
     }
