@@ -337,8 +337,13 @@ function renderRunPanel(full){
 
   if(s.status==='waiting'){
     qd.innerHTML = '<p class="sub">Share your code with participants, then start the quiz once everyone has joined.</p>';
-    const b = mk('button','pri'); b.textContent='Start quiz'; b.disabled = !s.questions.length; b.onclick=startQuiz; ctrl.appendChild(b);
+    const b = mk('button','pri'); b.textContent='Start quiz'; b.disabled = !localQs.length; b.onclick=startQuiz; ctrl.appendChild(b);
     const sc = mk('button'); sc.textContent='Show code'; sc.onclick=showCodeModal; ctrl.appendChild(sc);
+    if(!localQs.length){
+      const hint = mk('div'); hint.style.cssText='width:100%;font-size:13px;color:var(--warning);margin-top:8px';
+      hint.textContent = 'Add at least one question in the Build tab before you can start.';
+      ctrl.appendChild(hint);
+    }
 
   } else if(s.status==='active'){
     const q = s.questions[s.currentQ];
