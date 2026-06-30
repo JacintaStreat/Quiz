@@ -121,8 +121,50 @@ function loadMySessions(){
     const info = mk('div'); info.style.flex='1';
     info.innerHTML = `<div style="font-weight:500">${s.name}</div><div style="font-size:12px;color:var(--text-muted)">Code: ${s.code} · ${new Date(s.created).toLocaleDateString()}</div>`;
     const btn = mk('button','sml pri'); btn.textContent='Resume'; btn.onclick=()=>resumeSession(s.code);
-    row.appendChild(info); row.appendChild(btn); el.appendChild(row);
+    const delBtn = mk('button','sml'); delBtn.style.color='var(--danger)'; delBtn.textContent='Remove';
+    delBtn.onclick = ()=>removeMySession(s.code, s.name);
+    row.appendChild(info); row.appendChild(btn); row.appendChild(delBtn); el.appendChild(row);
   });
+  if(mine.length > 1){
+    const clearRow = mk('div'); clearRow.className='mt1';
+    const clearBtn = mk('button','sml'); clearBtn.style.color='var(--danger)'; clearBtn.textContent='Clear all';
+    clearBtn.onclick = clearAllMySessions;
+    clearRow.appendChild(clearBtn); el.appendChild(clearRow);
+  }
+}
+
+// Permanently deletes the session from Firebase (so no one can rejoin with
+// that code anymore) and removes it from this device's resume list.
+async function removeMySession(code, name){
+  const ok = confirm(`Permanently delete "${name||code}"?\n\nThis removes it from your list and deletes the session data from the database — anyone with the code will no longer be able to join or resume it. This can't be undone.`);
+  if(!ok) return;
+
+  try{
+    await db.ref('sessions/'+code).remove();
+  } catch(e){
+    console.error('Failed to delete session from Firebase', e);
+    showToast('Could not delete from the database — removed from your list only.');
+  }
+
+  const mine = JSON.parse(localStorage.getItem('quiz_my_sessions')||'[]');
+  const filtered = mine.filter(s=>s.code !== code);
+  localStorage.setItem('quiz_my_sessions', JSON.stringify(filtered));
+  loadMySessions();
+}
+
+async function clearAllMySessions(){
+  const mine = JSON.parse(localStorage.getItem('quiz_my_sessions')||'[]');
+  const ok = confirm(`Permanently delete all ${mine.length} session${mine.length!==1?'s':''} in this list?\n\nThis deletes their data from the database too — no one will be able to rejoin or resume them. This can't be undone.`);
+  if(!ok) return;
+
+  for(const s of mine){
+    try{ await db.ref('sessions/'+s.code).remove(); }
+    catch(e){ console.error('Failed to delete session', s.code, e); }
+  }
+
+  localStorage.setItem('quiz_my_sessions', '[]');
+  loadMySessions();
+  showToast('All sessions deleted');
 }
 
 // ── CODE / QR MODAL ───────────────────────────────────────────────────────
