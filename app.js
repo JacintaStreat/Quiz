@@ -591,7 +591,7 @@ function renderRunPanel(full){
       qd.appendChild(card);
     }
     const rv = mk('button'); rv.textContent='Reveal answers'; rv.disabled = s.revealAnswers; rv.onclick=doReveal; ctrl.appendChild(rv);
-    const nx = mk('button','pri'); nx.textContent='Next question'; nx.disabled = (s.currentQ >= s.questions.length-1); nx.onclick=doNext; ctrl.appendChild(nx);
+    const nx = mk('button','pri'); nx.textContent='Next question'; nx.disabled = !s.revealAnswers || (s.currentQ >= s.questions.length-1); nx.onclick=doNext; ctrl.appendChild(nx);
     const en = mk('button','red'); en.textContent='End quiz'; en.onclick=doEnd; ctrl.appendChild(en);
     if(s.revealAnswers){
       clearTimerInterval();
