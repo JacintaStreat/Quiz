@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Quiz Live</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+:root{
+  --bg:#f7f7f5; --surface:#ffffff; --surface-1:#f1f0ec; --border:#e3e1da; --border-strong:#cfccc2;
+  --text:#1f1e1b; --text-secondary:#5f5e5a; --text-muted:#8a8881;
+  --accent:#185fa5; --accent-bg:#e6f1fb; --accent-strong:#378add;
+  --success:#27500a; --success-bg:#eaf3de; --success-strong:#3B6D11;
+  --danger:#791f1f; --danger-bg:#fcebeb; --danger-strong:#e24b4a;
+  --warning:#633806; --warning-bg:#faeeda;
+  --radius:8px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);line-height:1.5}
+.wrap{max-width:640px;margin:0 auto;padding:20px 16px 60px}
+.screen{display:none}.screen.active{display:block}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:14px}
+h1{font-size:26px;font-weight:600;margin-bottom:6px}
+h2{font-size:18px;font-weight:600;margin-bottom:4px}
+p.sub{color:var(--text-secondary);font-size:14px}
+button{display:inline-flex;align-items:center;gap:6px;justify-content:center;padding:11px 18px;border-radius:var(--radius);border:1px solid var(--border-strong);background:var(--surface);color:var(--text);font-size:15px;font-weight:500;cursor:pointer;font-family:inherit}
+button:hover:not(:disabled){background:var(--surface-1)}
+button:disabled{opacity:.4;cursor:not-allowed}
+button.pri{background:var(--accent-strong);color:#fff;border-color:var(--accent-strong)}
+button.pri:hover:not(:disabled){opacity:.9}
+button.red{background:var(--danger-bg);color:var(--danger);border-color:var(--danger-strong)}
+button.sml{padding:6px 12px;font-size:13px}
+button.block{width:100%}
+input[type=text],input[type=number],textarea{width:100%;padding:10px 12px;border:1px solid var(--border-strong);border-radius:var(--radius);background:var(--surface);color:var(--text);font-size:15px;font-family:inherit}
+input:focus,textarea:focus{outline:none;border-color:var(--accent-strong);box-shadow:0 0 0 3px var(--accent-bg)}
+textarea{resize:vertical;min-height:70px}
+label{font-size:13px;color:var(--text-secondary);display:block;margin-bottom:6px;font-weight:500}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.mt1{margin-top:10px}.mt2{margin-top:18px}.mt3{margin-top:28px}
+.tab-bar{display:flex;border-bottom:1px solid var(--border);margin-bottom:18px;gap:2px}
+.tab{padding:10px 16px;font-size:14px;font-weight:500;cursor:pointer;color:var(--text-secondary);border-bottom:2px solid transparent;margin-bottom:-1px;background:none;border-left:none;border-right:none;border-top:none;border-radius:0}
+.tab:hover{background:none;color:var(--text)}
+.tab.on{color:var(--accent);border-bottom:2px solid var(--accent-strong)}
+.qrow{display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:var(--radius);border:1px solid var(--border);background:var(--surface);cursor:pointer;margin-bottom:8px}
+.qrow:hover{background:var(--surface-1)}.qrow.sel{border-color:var(--accent-strong);background:var(--accent-bg)}
+.ans-btn{width:100%;padding:14px 16px;border-radius:var(--radius);border:2px solid var(--border-strong);background:var(--surface);color:var(--text);font-size:16px;text-align:left;cursor:pointer;margin-top:10px;display:flex;align-items:center;gap:12px;font-family:inherit;transition:all .15s}
+.ans-btn:hover:not(:disabled){background:var(--surface-1);border-color:var(--accent-strong)}
+.ans-btn:disabled{cursor:not-allowed}
+.ans-btn.picked{background:var(--accent-bg);border-color:var(--accent-strong);color:var(--accent)}
+.ans-btn.correct{background:var(--success-bg);border-color:var(--success-strong);color:var(--success);font-weight:600}
+.ans-btn.wrong{background:var(--danger-bg);border-color:var(--danger-strong);color:var(--danger)}
+.lb-row{display:flex;align-items:center;gap:14px;padding:12px 16px;border-radius:var(--radius);border:1px solid var(--border);margin-top:8px;background:var(--surface)}
+.lb-row.me{border-color:var(--accent-strong);background:var(--accent-bg)}
+.drop-zone{border:2px dashed var(--border-strong);border-radius:var(--radius);padding:24px;text-align:center;cursor:pointer;margin-top:8px}
+.drop-zone:hover{background:var(--surface-1)}
+.badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600}
+.badge.waiting{background:var(--warning-bg);color:var(--warning)}
+.badge.active{background:var(--success-bg);color:var(--success)}
+.badge.done{background:var(--accent-bg);color:var(--accent)}
+img.qimg{max-width:100%;max-height:240px;border-radius:var(--radius);display:block;margin-top:10px;object-fit:contain}
+.cletter{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;background:var(--surface-1);font-size:14px;font-weight:600;flex-shrink:0}
+.code-box{font-size:42px;font-weight:700;letter-spacing:10px;color:var(--accent);background:var(--accent-bg);border-radius:12px;padding:20px 24px;text-align:center;margin:14px 0}
+.host-choice{padding:10px 14px;border-radius:var(--radius);border:1px solid var(--border);margin-top:8px;font-size:15px;display:flex;align-items:center;gap:10px}
+.stat-grid{display:flex;gap:24px;flex-wrap:wrap}
+.stat-lbl{font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+.stat-val{font-size:24px;font-weight:700}
+.modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);align-items:center;justify-content:center;z-index:50;padding:20px}
+.modal-content{background:var(--surface);border-radius:12px;padding:24px;width:100%;max-width:340px;max-height:85vh;overflow-y:auto}
+.center{text-align:center}
+.plist-item{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);font-size:14px}
+.err-text{color:var(--danger);font-size:13px;margin-top:6px;min-height:18px}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--text);color:#fff;border-radius:var(--radius);padding:10px 18px;font-size:14px;z-index:60;display:none}
+.bar-track{background:var(--surface-1);border-radius:4px;height:8px;margin-top:4px}
+.bar-fill{height:8px;border-radius:4px;transition:width .4s}
+.setup-banner{background:var(--warning-bg);color:var(--warning);border-radius:var(--radius);padding:12px 16px;font-size:13px;margin-bottom:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div id="setup-banner" class="setup-banner" style="display:none">
+    Firebase isn't configured yet. Open <code>firebase-config.js</code> and paste in your project's config keys. See SETUP.md for instructions.
+  </div>
+
+  <!-- LANDING -->
+  <div id="s-land" class="screen active">
+    <div class="center" style="margin:30px 0">
+      <h1>Quiz Live</h1>
+      <p class="sub">Real-time quizzes — participants join on their own device</p>
+    </div>
+    <div class="row" style="max-width:380px;margin:0 auto">
+      <button class="pri block" onclick="showScreen('s-host-setup')">Host a quiz</button>
+      <button class="block" onclick="showScreen('s-join')">Join with a code</button>
+    </div>
+    <div class="card mt3" style="max-width:380px;margin:20px auto 0;font-size:14px;color:var(--text-secondary)">
+      <b style="color:var(--text)">How it works</b><br><br>
+      1. Host creates a session and gets a 6-digit code<br>
+      2. Share the code (or QR code) with participants<br>
+      3. Participants join on their own phone or laptop<br>
+      4. Host controls pacing — live leaderboard updates automatically
+    </div>
+  </div>
+
+  <!-- HOST SETUP -->
+  <div id="s-host-setup" class="screen">
+    <h2>Host a quiz</h2>
+    <div class="card mt2">
+      <label>Session name (optional)</label>
+      <input type="text" id="session-name-input" placeholder="e.g. Friday Trivia"/>
+      <div class="row mt2">
+        <button class="pri" onclick="createSession()">Create session</button>
+        <button onclick="showScreen('s-land')">Cancel</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2 style="font-size:15px">Resume a session</h2>
+      <div id="my-sessions-list" class="mt1"><p class="sub">Loading…</p></div>
+    </div>
+  </div>
+
+  <!-- HOST MAIN -->
+  <div id="s-host" class="screen">
+    <div class="row" style="justify-content:space-between;margin-bottom:14px">
+      <div>
+        <span style="font-size:17px;font-weight:600" id="h-session-name">Quiz</span>
+      </div>
+      <div class="row">
+        <span style="font-size:14px">Code: <b id="h-code-inline" style="letter-spacing:2px;color:var(--accent)"></b></span>
+        <button class="sml" onclick="showCodeModal()">Show code</button>
+      </div>
+    </div>
+    <div class="tab-bar">
+      <button class="tab on" id="ht-build" onclick="hTab('build')">Build</button>
+      <button class="tab" id="ht-run" onclick="hTab('run')">Run <span id="ht-pbadge" style="display:none;margin-left:4px;background:var(--accent-strong);color:#fff;font-size:11px;padding:1px 7px;border-radius:10px;font-weight:600"></span></button>
+      <button class="tab" id="ht-lb" onclick="hTab('lb')">Scores</button>
+    </div>
+
+    <div id="hp-build">
+      <div class="row" style="justify-content:space-between;margin-bottom:14px">
+        <h2 style="margin:0">Questions <span id="qcount" style="color:var(--text-muted);font-weight:400;font-size:13px"></span></h2>
+        <div class="row">
+          <button class="sml" onclick="showSaveModal()">Save quiz</button>
+          <button class="sml" onclick="showLoadModal()">Load quiz</button>
+          <button class="sml pri" onclick="addQ()">Add question</button>
+        </div>
+      </div>
+      <div id="qlist"></div>
+      <div id="qeditor"></div>
+    </div>
+
+    <div id="hp-run" style="display:none">
+      <div class="card">
+        <div class="stat-grid">
+          <div><div class="stat-lbl">Participants</div><div class="stat-val" id="r-pcount">0</div></div>
+          <div><div class="stat-lbl">Question</div><div class="stat-val" id="r-qnum">—</div></div>
+          <div><div class="stat-lbl">Responses</div><div class="stat-val" id="r-resp">—</div></div>
+          <div><div class="stat-lbl">Status</div><div style="margin-top:4px"><span class="badge waiting" id="r-badge">waiting</span></div></div>
+        </div>
+      </div>
+      <div id="r-qdisplay"></div>
+      <div id="r-ctrl" class="row mt2"></div>
+      <div id="r-chart" class="mt2"></div>
+    </div>
+
+    <div id="hp-lb" style="display:none">
+      <h2>Leaderboard</h2>
+      <div id="h-lb" class="mt1"></div>
+    </div>
+  </div>
+
+  <!-- JOIN -->
+  <div id="s-join" class="screen">
+    <div style="max-width:340px;margin:20px auto 0">
+      <h2 style="font-size:22px">Join a quiz</h2>
+      <p class="sub">Enter the 6-digit code from your host</p>
+      <label class="mt2">Session code</label>
+      <input type="text" id="join-code" placeholder="000000" maxlength="6" inputmode="numeric"
+        style="font-size:26px;letter-spacing:8px;text-align:center"
+        oninput="this.value=this.value.replace(/[^0-9]/g,'')"
+        onkeydown="if(event.key==='Enter')doJoin()"/>
+      <label class="mt2">Your name</label>
+      <input type="text" id="join-name" placeholder="Alex" maxlength="24" onkeydown="if(event.key==='Enter')doJoin()"/>
+      <div id="join-err" class="err-text"></div>
+      <button class="pri block mt2" onclick="doJoin()">Join</button>
+      <button class="block mt1" onclick="showScreen('s-land')">Back</button>
+    </div>
+  </div>
+
+  <!-- PARTICIPANT -->
+  <div id="s-part" class="screen">
+    <div class="row" style="justify-content:space-between;margin-bottom:14px">
+      <div><span style="font-weight:600" id="p-name-hdr"></span> <span style="font-size:13px;color:var(--text-muted)" id="p-session-hdr"></span></div>
+      <div id="p-sync" style="font-size:12px;color:var(--success)">● live</div>
+    </div>
+    <div class="tab-bar">
+      <button class="tab on" id="pt-quiz" onclick="pTab('quiz')">Quiz</button>
+      <button class="tab" id="pt-lb" onclick="pTab('lb')">Leaderboard</button>
+    </div>
+    <div id="pp-quiz"><div id="p-main"></div></div>
+    <div id="pp-lb" style="display:none"><div id="p-lb"></div></div>
+  </div>
+
+</div>
+
+<!-- CODE MODAL -->
+<div id="modal-code" class="modal">
+  <div class="modal-content center">
+    <h2>Share this code</h2>
+    <p class="sub">Participants enter it on their device</p>
+    <div class="code-box" id="modal-code-display"></div>
+    <div id="modal-qr" style="margin:14px auto;width:180px;height:180px"></div>
+    <p class="sub" id="modal-pcount-display"></p>
+    <div id="modal-plist" style="text-align:left;max-height:140px;overflow-y:auto;margin-top:8px"></div>
+    <button class="block mt2" onclick="closeModal('modal-code')">Done</button>
+  </div>
+</div>
+
+<!-- SAVE MODAL -->
+<div id="modal-save" class="modal">
+  <div class="modal-content">
+    <h2>Save quiz</h2>
+    <label class="mt1">Quiz name</label>
+    <input type="text" id="save-name" placeholder="e.g. Team trivia night"/>
+    <div id="save-err" class="err-text"></div>
+    <div class="row mt2">
+      <button class="pri" onclick="doSaveQuiz()">Save</button>
+      <button onclick="closeModal('modal-save')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- LOAD MODAL -->
+<div id="modal-load" class="modal">
+  <div class="modal-content">
+    <h2>Load quiz</h2>
+    <div id="quiz-list-modal" class="mt1"></div>
+    <button class="block mt2" onclick="closeModal('modal-load')">Close</button>
+  </div>
+</div>
+
+<input type="file" id="img-file-input" accept="image/*" style="display:none"/>
+<div class="toast" id="toast"></div>
+
+<script src="firebase-config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
