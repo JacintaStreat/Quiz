@@ -109,8 +109,9 @@ img.qimg{max-width:100%;max-height:240px;border-radius:var(--radius);display:blo
     <div class="card mt2">
       <label>Session name (optional)</label>
       <input type="text" id="session-name-input" placeholder="e.g. Friday Trivia"/>
+      <div id="create-session-err" class="err-text"></div>
       <div class="row mt2">
-        <button class="pri" onclick="createSession()">Create session</button>
+        <button class="pri" id="create-session-btn" onclick="createSession()">Create session</button>
         <button onclick="showScreen('s-land')">Cancel</button>
       </div>
     </div>

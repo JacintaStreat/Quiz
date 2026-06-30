@@ -8,6 +8,7 @@
 // Project settings (gear icon) → General tab → "Your apps" → SDK setup and configuration
 // ──────────────────────────────────────────────────────────────────────────
 
+
 const firebaseConfig = {
   apiKey: "AIzaSyCzAamdBtcWTvu1n3JwgpqPsBqPsmM69G4",
   authDomain: "quiz2026-fc115.firebaseapp.com",
@@ -18,6 +19,15 @@ const firebaseConfig = {
   appId: "1:140325558049:web:97795441c6a3cba9125060"
 };
 
+
+
+
+
 // Initialize Firebase — do not edit below this line
-firebase.initializeApp(firebaseConfig);
-const db = firebase.database();
+try{
+  firebase.initializeApp(firebaseConfig);
+  var db = firebase.database();
+} catch(e){
+  console.error('Firebase initialization failed:', e);
+  var db = null;
+}

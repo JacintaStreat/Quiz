@@ -54,18 +54,33 @@ function blankLive(code, name){
 
 // ── SESSION CREATION (HOST) ───────────────────────────────────────────────
 async function createSession(){
-  const name = (document.getElementById('session-name-input').value||'').trim() || 'Quiz';
-  const code = String(Math.floor(100000 + Math.random()*900000));
-  const state = blankLive(code, name);
+  const btn = document.getElementById('create-session-btn');
+  const errEl = document.getElementById('create-session-err');
+  if(errEl) errEl.textContent = '';
+  if(btn){ btn.disabled = true; btn.textContent = 'Creating…'; }
 
-  await db.ref('sessions/'+code).set(state);
+  try{
+    if(typeof db === 'undefined' || !db){
+      throw new Error('Firebase database is not initialized — check firebase-config.js');
+    }
 
-  // remember locally so host can resume
-  const mine = JSON.parse(localStorage.getItem('quiz_my_sessions')||'[]');
-  mine.unshift({code, name, created: Date.now()});
-  localStorage.setItem('quiz_my_sessions', JSON.stringify(mine.slice(0,10)));
+    const name = (document.getElementById('session-name-input').value||'').trim() || 'Quiz';
+    const code = String(Math.floor(100000 + Math.random()*900000));
+    const state = blankLive(code, name);
 
-  openHostSession(code, state);
+    await db.ref('sessions/'+code).set(state);
+
+    const mine = JSON.parse(localStorage.getItem('quiz_my_sessions')||'[]');
+    mine.unshift({code, name, created: Date.now()});
+    localStorage.setItem('quiz_my_sessions', JSON.stringify(mine.slice(0,10)));
+
+    openHostSession(code, state);
+  } catch(e){
+    console.error('createSession failed:', e);
+    if(errEl) errEl.textContent = 'Failed to create session: ' + (e.message || e);
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = 'Create session'; }
+  }
 }
 
 async function resumeSession(code){
