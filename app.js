@@ -54,6 +54,15 @@ function blankLive(code, name){
 
 // ── SESSION CREATION (HOST) ───────────────────────────────────────────────
 async function createSession(){
+  if(!libraryPassphraseHash){
+    const proceed = confirm(
+      "You haven't unlocked a quiz library passphrase yet.\n\n" +
+      "Any quiz you save during this session will only be saved on this device, not shared with other hosts.\n\n" +
+      "Click OK to continue anyway, or Cancel to go back and unlock a passphrase first."
+    );
+    if(!proceed) return;
+  }
+
   const btn = document.getElementById('create-session-btn');
   const errEl = document.getElementById('create-session-err');
   if(errEl) errEl.textContent = '';
@@ -512,6 +521,12 @@ function renderRunPanel(full){
       const qt = mk('div'); qt.style.cssText = `font-size:18px;font-weight:600;margin-top:${q.img?'12px':'0'}`; qt.textContent = q.text||'(no text)'; card.appendChild(qt);
       const qm = mk('div'); qm.style.cssText = 'font-size:13px;color:var(--text-muted);margin-top:8px'; qm.textContent = `Question ${s.currentQ+1} of ${s.questions.length}`; card.appendChild(qm);
       const timerEl = mk('div'); timerEl.id='r-timer'; timerEl.style.cssText='font-size:28px;font-weight:700;margin-top:10px;color:var(--accent)'; card.appendChild(timerEl);
+
+      const ansForQ = s.answers?.[s.currentQ] || {};
+      const totalAns = Object.keys(ansForQ).length;
+      const counts = {};
+      Object.values(ansForQ).forEach(a=>{ counts[a] = (counts[a]||0) + 1; });
+
       q.choices.forEach((c,ci)=>{
         if(!c) return;
         const isCorrect = s.revealAnswers && ci===q.correct;
@@ -522,7 +537,13 @@ function renderRunPanel(full){
         ab.style.fontWeight = isCorrect ? '600' : '400';
         const lt = mk('span'); lt.style.fontWeight='600'; lt.textContent = String.fromCharCode(65+ci)+'.'; ab.appendChild(lt);
         const ct = mk('span'); ct.textContent = c; ab.appendChild(ct);
-        if(isCorrect){ const ck=mk('span'); ck.style.marginLeft='auto'; ck.textContent='✓'; ab.appendChild(ck); }
+        if(s.revealAnswers){
+          const pct = totalAns ? Math.round(((counts[ci]||0) / totalAns) * 100) : 0;
+          const pctEl = mk('span'); pctEl.style.cssText='margin-left:auto;font-size:13px;color:var(--text-muted)';
+          pctEl.textContent = `${pct}% (${counts[ci]||0})`;
+          ab.appendChild(pctEl);
+        }
+        if(isCorrect){ const ck=mk('span'); ck.style.marginLeft=s.revealAnswers?'8px':'auto'; ck.textContent='✓'; ab.appendChild(ck); }
         card.appendChild(ab);
       });
       qd.appendChild(card);
@@ -715,14 +736,6 @@ window.addEventListener('DOMContentLoaded', ()=>{
 });
 
 // ── PARTICIPANT VIEW ───────────────────────────────────────────────────────
-function pTab(t){
-  ['quiz','lb'].forEach(x=>{
-    document.getElementById('pt-'+x).classList.toggle('on', x===t);
-    document.getElementById('pp-'+x).style.display = x===t ? '' : 'none';
-  });
-  if(t==='lb') renderLB('p-lb', myName);
-}
-
 let lastTimerQ = -1;
 
 function renderPView(){
@@ -740,6 +753,11 @@ function renderPView(){
     const pos = sorted.findIndex(([nm])=>nm===myName) + 1;
     const sc = s.participants?.[myName]?.score || 0;
     el.innerHTML = `<div class="card"><div style="font-size:19px;font-weight:600;color:var(--success)">Quiz complete!</div><div style="margin-top:10px;font-size:16px">You finished <strong>#${pos}</strong> with <strong>${sc} point${sc!==1?'s':''}</strong></div></div>`;
+    const lbWrap = mk('div'); lbWrap.className='mt2';
+    const lbTitle = mk('h2'); lbTitle.textContent='Final leaderboard'; lbWrap.appendChild(lbTitle);
+    const lbList = mk('div'); lbList.id='p-lb-final'; lbWrap.appendChild(lbList);
+    el.appendChild(lbWrap);
+    renderLB('p-lb-final', myName);
     return;
   }
 
@@ -770,6 +788,11 @@ function renderPView(){
     tickTimer('p-timer', q.timeLimit, s.questionStartedAt || Date.now());
   }
 
+  const ansForQ = s.answers?.[s.currentQ] || {};
+  const totalAns = Object.keys(ansForQ).length;
+  const counts = {};
+  Object.values(ansForQ).forEach(a=>{ counts[a] = (counts[a]||0) + 1; });
+
   q.choices.forEach((c,i)=>{
     if(!c) return;
     let cls = 'ans-btn';
@@ -778,8 +801,14 @@ function renderPView(){
     if(reveal && answered && myAns===i && myAns!==q.correct) cls += ' wrong';
     const btn = mk('button', cls);
     const lt = mk('span','cletter'); lt.textContent = String.fromCharCode(65+i); btn.appendChild(lt);
-    const lb = mk('span'); lb.textContent = c; btn.appendChild(lb);
-    if(reveal && i===q.correct){ const ck=mk('span'); ck.style.marginLeft='auto'; ck.textContent='✓'; btn.appendChild(ck); }
+    const lb = mk('span'); lb.textContent = c; lb.style.flex='1'; btn.appendChild(lb);
+    if(reveal){
+      const pct = totalAns ? Math.round(((counts[i]||0) / totalAns) * 100) : 0;
+      const pctEl = mk('span'); pctEl.style.cssText='font-size:13px;opacity:0.85';
+      pctEl.textContent = pct + '%';
+      btn.appendChild(pctEl);
+    }
+    if(reveal && i===q.correct){ const ck=mk('span'); ck.style.marginLeft='4px'; ck.textContent='✓'; btn.appendChild(ck); }
     btn.disabled = (answered && !reveal) || reveal;
     btn.onclick = ()=>submitAns(i);
     el.appendChild(btn);
@@ -824,8 +853,7 @@ function attachSessionListener(code){
       if(document.getElementById('modal-code').style.display==='flex') updateCodeModal();
     } else if(role==='participant'){
       const ps = document.getElementById('p-sync'); if(ps){ ps.textContent='● live'; ps.style.color='var(--success)'; }
-      if(document.getElementById('pt-quiz').classList.contains('on')) renderPView();
-      else renderLB('p-lb', myName);
+      renderPView();
     }
   }, err=>{
     console.error('Firebase listener error', err);
