@@ -11,7 +11,7 @@
 const firebaseConfig = {
   apiKey: "AIzaSyCzAamdBtcWTvu1n3JwgpqPsBqPsmM69G4",
   authDomain: "quiz2026-fc115.firebaseapp.com",
-  databaseURL: "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",
+  databaseURL: "https://quiz2026-fc115-default-rtdb.firebaseio.com",
   projectId: "quiz2026-fc115",
   storageBucket: "quiz2026-fc115.firebasestorage.app",
   messagingSenderId: "140325558049",
