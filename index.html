@@ -182,7 +182,7 @@ img.qimg{max-width:100%;max-height:240px;border-radius:var(--radius);display:blo
         oninput="this.value=this.value.replace(/[^0-9]/g,'')"
         onkeydown="if(event.key==='Enter')doJoin()"/>
       <label class="mt2">Your name</label>
-      <input type="text" id="join-name" placeholder="Alex" maxlength="24" onkeydown="if(event.key==='Enter')doJoin()"/>
+      <input type="text" id="join-name" maxlength="24" onkeydown="if(event.key==='Enter')doJoin()"/>
       <div id="join-err" class="err-text"></div>
       <button class="pri block mt2" onclick="doJoin()">Join</button>
       <button class="block mt1" onclick="showScreen('s-land')">Back</button>

@@ -500,17 +500,29 @@ async function startQuiz(){
 }
 
 async function doReveal(){
-  const s = liveState;
-  if(s.revealAnswers) return; // already revealed — avoid double-scoring from manual + auto triggers
+  if(!sessionRef) return;
+
+  // Pull the freshest copy directly from Firebase rather than trusting the
+  // local liveState cache — a participant's answer may have been written
+  // to the database moments ago but not yet propagated to this listener.
+  // Scoring off a stale snapshot (and then .set()-ing it back) can silently
+  // overwrite real answers that hadn't synced down yet.
+  const snap = await sessionRef.get();
+  const s = snap.val();
+  if(!s) return;
+  if(s.revealAnswers) { liveState = s; return; } // already revealed elsewhere — avoid double-scoring
+
   s.revealAnswers = true;
   const q = s.questions[s.currentQ];
   const ans = s.answers?.[s.currentQ] || {};
+  s.participants = s.participants || {};
   Object.entries(ans).forEach(([name,a])=>{
-    if(a === q.correct){
+    if(Number(a) === Number(q.correct)){
       if(!s.participants[name]) s.participants[name] = {score:0};
       s.participants[name].score = (s.participants[name].score||0) + 1;
     }
   });
+  liveState = s;
   await sessionRef.set(s);
 }
 
