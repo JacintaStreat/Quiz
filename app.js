@@ -202,13 +202,30 @@ function openEditor(i){
   card.appendChild(prev);
 
   appendLabel(card,'Answer choices — tick the correct one',{marginTop:'16px'});
-  q.choices.forEach((c,ci)=>{
-    const row = mk('div','row mt1');
-    const radio = mk('input'); radio.type='radio'; radio.name='correct_'+i; radio.value=ci; radio.checked=(q.correct===ci); radio.style.cssText='width:auto;flex:none;accent-color:var(--accent-strong)';
-    const lbl = mk('span'); lbl.style.cssText='font-weight:600;min-width:20px;font-size:14px;color:var(--text-secondary)'; lbl.textContent=String.fromCharCode(65+ci);
-    const inp = mk('input'); inp.type='text'; inp.value=c||''; inp.placeholder='Choice '+(ci+1); inp.id='ch_'+i+'_'+ci; inp.style.flex='1';
-    row.appendChild(radio); row.appendChild(lbl); row.appendChild(inp); card.appendChild(row);
-  });
+  const choicesWrap = mk('div'); choicesWrap.id='choices-wrap-'+i;
+  card.appendChild(choicesWrap);
+  renderChoiceRows(choicesWrap, q, i);
+
+  const choiceBtnRow = mk('div','row mt1');
+  const addChoiceBtn = mk('button','sml');
+  addChoiceBtn.textContent = 'Add choice';
+  addChoiceBtn.onclick = ()=>{
+    if(q.choices.length >= 6){ showToast('Maximum 6 choices'); return; }
+    syncChoicesFromInputs(q, i);
+    q.choices.push('');
+    renderChoiceRows(choicesWrap, q, i);
+  };
+  const removeChoiceBtn = mk('button','sml');
+  removeChoiceBtn.textContent = 'Remove choice';
+  removeChoiceBtn.onclick = ()=>{
+    if(q.choices.length <= 2){ showToast('Minimum 2 choices'); return; }
+    syncChoicesFromInputs(q, i);
+    q.choices.pop();
+    if(q.correct >= q.choices.length) q.correct = q.choices.length - 1;
+    renderChoiceRows(choicesWrap, q, i);
+  };
+  choiceBtnRow.appendChild(addChoiceBtn); choiceBtnRow.appendChild(removeChoiceBtn);
+  card.appendChild(choiceBtnRow);
 
   appendLabel(card,'Time limit (seconds)',{marginTop:'16px'});
   const ti = mk('input'); ti.type='number'; ti.id='ed-time'; ti.value=q.timeLimit; ti.min=5; ti.max=120; ti.style.width='100px'; card.appendChild(ti);
@@ -224,6 +241,26 @@ function appendLabel(parent, text, extraStyle){
   const l = mk('label'); l.textContent = text;
   if(extraStyle) Object.assign(l.style, extraStyle);
   parent.appendChild(l);
+}
+
+function renderChoiceRows(container, q, i){
+  container.innerHTML = '';
+  q.choices.forEach((c,ci)=>{
+    const row = mk('div','row mt1');
+    const radio = mk('input'); radio.type='radio'; radio.name='correct_'+i; radio.value=ci; radio.checked=(q.correct===ci); radio.style.cssText='width:auto;flex:none;accent-color:var(--accent-strong)';
+    const lbl = mk('span'); lbl.style.cssText='font-weight:600;min-width:20px;font-size:14px;color:var(--text-secondary)'; lbl.textContent=String.fromCharCode(65+ci);
+    const inp = mk('input'); inp.type='text'; inp.value=c||''; inp.placeholder='Choice '+(ci+1); inp.id='ch_'+i+'_'+ci; inp.style.flex='1';
+    row.appendChild(radio); row.appendChild(lbl); row.appendChild(inp); container.appendChild(row);
+  });
+}
+
+function syncChoicesFromInputs(q, i){
+  // pulls whatever is currently typed into the inputs back into q.choices
+  // before we change the array length, so in-progress edits aren't lost
+  for(let ci=0; ci<q.choices.length; ci++){
+    const val = document.getElementById('ch_'+i+'_'+ci)?.value;
+    if(val !== undefined) q.choices[ci] = val;
+  }
 }
 function buildImgPreview(container, src, i){
   container.innerHTML = '';
@@ -258,7 +295,7 @@ function saveQ(i){
   q.timeLimit = parseInt(document.getElementById('ed-time')?.value) || 20;
   const radio = document.querySelector('input[name="correct_'+i+'"]:checked');
   q.correct = radio ? parseInt(radio.value) : 0;
-  for(let ci=0; ci<4; ci++) q.choices[ci] = (document.getElementById('ch_'+i+'_'+ci)?.value||'').trim();
+  for(let ci=0; ci<q.choices.length; ci++) q.choices[ci] = (document.getElementById('ch_'+i+'_'+ci)?.value||'').trim();
   renderQList();
   const msg = document.getElementById('save-q-msg');
   if(msg){ msg.textContent='Saved!'; setTimeout(()=>{ if(msg) msg.textContent=''; }, 1800); }
@@ -312,6 +349,8 @@ function loadQuiz(name, entry){
 }
 
 // ── RUN PANEL ──────────────────────────────────────────────────────────────
+let lastHostTimerQ = -1;
+
 function renderRunPanel(full){
   const s = liveState; if(!s) return;
   const pcount = Object.keys(s.participants||{}).length;
@@ -328,7 +367,7 @@ function renderRunPanel(full){
 
   if(document.getElementById('modal-code').style.display==='flex') updateCodeModal();
 
-  if(!full){ if(s.status==='active') renderChart(); return; }
+  if(!full){ if(s.status==='active') updateResponseCount(); return; }
 
   const ctrl = document.getElementById('r-ctrl');
   const qd = document.getElementById('r-qdisplay');
@@ -351,7 +390,8 @@ function renderRunPanel(full){
       const card = mk('div','card');
       if(q.img){ const im=mk('img','qimg'); im.src=q.img; im.alt=''; card.appendChild(im); }
       const qt = mk('div'); qt.style.cssText = `font-size:18px;font-weight:600;margin-top:${q.img?'12px':'0'}`; qt.textContent = q.text||'(no text)'; card.appendChild(qt);
-      const qm = mk('div'); qm.style.cssText = 'font-size:13px;color:var(--text-muted);margin-top:8px'; qm.textContent = `Question ${s.currentQ+1} of ${s.questions.length} · ${q.timeLimit}s`; card.appendChild(qm);
+      const qm = mk('div'); qm.style.cssText = 'font-size:13px;color:var(--text-muted);margin-top:8px'; qm.textContent = `Question ${s.currentQ+1} of ${s.questions.length}`; card.appendChild(qm);
+      const timerEl = mk('div'); timerEl.id='r-timer'; timerEl.style.cssText='font-size:28px;font-weight:700;margin-top:10px;color:var(--accent)'; card.appendChild(timerEl);
       q.choices.forEach((c,ci)=>{
         if(!c) return;
         const isCorrect = s.revealAnswers && ci===q.correct;
@@ -370,7 +410,14 @@ function renderRunPanel(full){
     const rv = mk('button'); rv.textContent='Reveal answers'; rv.disabled = s.revealAnswers; rv.onclick=doReveal; ctrl.appendChild(rv);
     const nx = mk('button','pri'); nx.textContent='Next question'; nx.disabled = (s.currentQ >= s.questions.length-1); nx.onclick=doNext; ctrl.appendChild(nx);
     const en = mk('button','red'); en.textContent='End quiz'; en.onclick=doEnd; ctrl.appendChild(en);
-    renderChart();
+    if(s.revealAnswers){
+      clearTimerInterval();
+    } else if(lastHostTimerQ !== s.currentQ){
+      lastHostTimerQ = s.currentQ;
+      startHostTimer(q.timeLimit, s.questionStartedAt, s.currentQ);
+    } else {
+      tickTimer('r-timer', q.timeLimit, s.questionStartedAt || Date.now());
+    }
 
   } else { // done
     qd.innerHTML = '<div class="card" style="color:var(--success);font-size:17px;font-weight:600">Quiz finished!</div>';
@@ -386,26 +433,56 @@ function renderRunPanel(full){
   }
 }
 
-function renderChart(){
+function updateResponseCount(){
   const s = liveState; if(!s || s.currentQ<0) return;
-  const q = s.questions[s.currentQ]; const el = document.getElementById('r-chart'); if(!q || !el) return;
-  const counts = [0,0,0,0];
   const ans = s.answers?.[s.currentQ] || {};
-  Object.values(ans).forEach(a=>{ if(typeof a==='number' && a>=0 && a<4) counts[a]++; });
-  const total = Object.keys(ans).length;
-  el.innerHTML = `<p class="sub">${total} response${total!==1?'s':''}</p>`;
-  q.choices.forEach((c,i)=>{
-    if(!c) return;
-    const pct = total ? Math.round(counts[i]/total*100) : 0;
-    const ok = s.revealAnswers && i===q.correct;
-    el.innerHTML += `<div style="margin-top:12px">
-      <div style="display:flex;justify-content:space-between;font-size:14px">
-        <span style="${ok?'color:var(--success);font-weight:600':''}">${String.fromCharCode(65+i)}. ${c}${ok?' ✓':''}</span>
-        <span style="color:var(--text-muted)">${counts[i]} (${pct}%)</span>
-      </div>
-      <div class="bar-track"><div class="bar-fill" style="background:${ok?'var(--success-strong)':'var(--accent-strong)'};width:${pct}%"></div></div>
-    </div>`;
+  setTxt('r-resp', Object.keys(ans).length);
+}
+
+// ── COUNTDOWN TIMER (host + participant) ──────────────────────────────────
+let timerInterval = null;
+let autoRevealFiredForQ = -1; // guards against firing doReveal more than once per question
+
+function clearTimerInterval(){
+  if(timerInterval){ clearInterval(timerInterval); timerInterval = null; }
+}
+
+function startHostTimer(timeLimit, startedAt, questionIndex){
+  clearTimerInterval();
+  if(!startedAt) startedAt = Date.now();
+  tickTimer('r-timer', timeLimit, startedAt, ()=>{
+    // only the host auto-triggers the reveal, and only once per question
+    if(autoRevealFiredForQ !== questionIndex){
+      autoRevealFiredForQ = questionIndex;
+      doReveal();
+    }
   });
+  timerInterval = setInterval(()=>tickTimer('r-timer', timeLimit, startedAt, ()=>{
+    if(autoRevealFiredForQ !== questionIndex){
+      autoRevealFiredForQ = questionIndex;
+      doReveal();
+    }
+  }), 1000);
+}
+
+function startParticipantTimer(timeLimit, startedAt){
+  clearTimerInterval();
+  if(!startedAt) startedAt = Date.now();
+  tickTimer('p-timer', timeLimit, startedAt);
+  timerInterval = setInterval(()=>tickTimer('p-timer', timeLimit, startedAt), 1000);
+}
+
+function tickTimer(elId, timeLimit, startedAt, onExpire){
+  const el = document.getElementById(elId);
+  if(!el){ clearTimerInterval(); return; }
+  const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+  const remaining = Math.max(0, timeLimit - elapsed);
+  el.textContent = remaining + 's';
+  el.style.color = remaining <= 5 ? 'var(--danger)' : 'var(--accent)';
+  if(remaining <= 0){
+    clearTimerInterval();
+    if(onExpire) onExpire();
+  }
 }
 
 // ── QUIZ CONTROL — write to Firebase, listener updates everyone ──────────
@@ -415,11 +492,16 @@ async function startQuiz(){
   liveState.currentQ = 0;
   liveState.answers = {};
   liveState.revealAnswers = false;
+  liveState.questionStartedAt = Date.now();
+  lastHostTimerQ = -1;
+  lastTimerQ = -1;
+  autoRevealFiredForQ = -1;
   await sessionRef.set(liveState);
 }
 
 async function doReveal(){
   const s = liveState;
+  if(s.revealAnswers) return; // already revealed — avoid double-scoring from manual + auto triggers
   s.revealAnswers = true;
   const q = s.questions[s.currentQ];
   const ans = s.answers?.[s.currentQ] || {};
@@ -437,6 +519,7 @@ async function doNext(){
   if(s.currentQ >= s.questions.length-1) return;
   s.currentQ++;
   s.revealAnswers = false;
+  s.questionStartedAt = Date.now();
   await sessionRef.set(s);
 }
 
@@ -508,15 +591,19 @@ function pTab(t){
   if(t==='lb') renderLB('p-lb', myName);
 }
 
+let lastTimerQ = -1;
+
 function renderPView(){
   const s = liveState; if(!s) return;
   const el = document.getElementById('p-main'); if(!el) return;
 
   if(s.status==='waiting'){
+    clearTimerInterval();
     el.innerHTML = `<div class="card"><div style="font-size:17px;font-weight:600">Waiting for host to start…</div><p class="sub" style="margin-top:6px">You're in! Sit tight.</p></div>`;
     return;
   }
   if(s.status==='done'){
+    clearTimerInterval();
     const sorted = Object.entries(s.participants||{}).sort((a,b)=>(b[1].score||0)-(a[1].score||0));
     const pos = sorted.findIndex(([nm])=>nm===myName) + 1;
     const sc = s.participants?.[myName]?.score || 0;
@@ -536,7 +623,20 @@ function renderPView(){
   if(q.img){ const im=mk('img','qimg'); im.src=q.img; im.alt='question image'; card.appendChild(im); }
   const qt = mk('div'); qt.style.cssText = `font-size:17px;font-weight:600;margin-top:${q.img?'12px':'0'}`; qt.textContent = q.text; card.appendChild(qt);
   const qm = mk('div'); qm.style.cssText = 'font-size:13px;color:var(--text-muted);margin-top:6px'; qm.textContent = `Question ${s.currentQ+1} of ${s.questions.length}`; card.appendChild(qm);
+  if(!reveal){
+    const timerEl = mk('div'); timerEl.id='p-timer'; timerEl.style.cssText='font-size:24px;font-weight:700;margin-top:8px;color:var(--accent)'; card.appendChild(timerEl);
+  } else {
+    clearTimerInterval();
+  }
   el.appendChild(card);
+
+  if(!reveal && lastTimerQ !== s.currentQ){
+    lastTimerQ = s.currentQ;
+    startParticipantTimer(q.timeLimit, s.questionStartedAt);
+  } else if(!reveal){
+    // re-render happened but timer already running — just make sure the element exists with current value
+    tickTimer('p-timer', q.timeLimit, s.questionStartedAt || Date.now());
+  }
 
   q.choices.forEach((c,i)=>{
     if(!c) return;
