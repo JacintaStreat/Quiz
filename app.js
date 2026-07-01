@@ -46,26 +46,22 @@ function exportQuizPDF(){
 
   const rows = localQs.map((q,i)=>{
     const choices = q.choices.filter(c=>c);
-    const choiceCells = choices.map((c,ci)=>`
-      <td class="choice-cell">
-        <span class="letter">${letters[ci]}</span>
-        ${c}
-      </td>`).join('');
+    const choiceItems = choices.map((c,ci)=>
+      `<span class="choice-item"><span class="letter">${letters[ci]}</span>${c}</span>`
+    ).join('');
 
     return `
       <div class="question-block">
-        <div class="question-header">
-          <span class="q-num">Q${i+1}</span>
-          <span class="q-text">${q.text || '(no question text)'}</span>
+        <div class="question-row">
+          <div class="question-left">
+            <div class="question-header">
+              <span class="q-num">Q${i+1}</span>
+              <span class="q-text">${q.text || '(no question text)'}</span>
+            </div>
+            <div class="choices-row">${choiceItems}</div>
+          </div>
+          <div class="mark-cell"><div class="mark-box"></div></div>
         </div>
-        <table class="choices-table">
-          <tbody>
-            <tr>
-              ${choiceCells}
-              <td class="mark-cell"><div class="mark-box"></div></td>
-            </tr>
-          </tbody>
-        </table>
       </div>`;
   }).join('');
 
@@ -79,16 +75,17 @@ function exportQuizPDF(){
   body{ font-family: Arial, Helvetica, sans-serif; font-size:13px; color:#111; padding:28px 32px; }
   h1{ font-size:20px; font-weight:700; margin-bottom:4px; }
   .subtitle{ font-size:12px; color:#666; margin-bottom:24px; }
-  .question-block{ margin-bottom:16px; page-break-inside:avoid; border:1px solid #ddd; border-radius:6px; overflow:hidden; }
-  .question-header{ display:flex; align-items:flex-start; gap:10px; background:#f5f5f3; padding:10px 14px; border-bottom:1px solid #ddd; }
+  .question-block{ margin-bottom:12px; page-break-inside:avoid; border:1px solid #ddd; border-radius:6px; overflow:hidden; }
+  .question-row{ display:flex; align-items:center; gap:0; }
+  .question-left{ flex:1; padding:10px 14px; }
+  .question-header{ display:flex; align-items:flex-start; gap:10px; margin-bottom:7px; }
   .q-num{ font-weight:700; font-size:14px; color:#185fa5; white-space:nowrap; min-width:28px; }
-  .q-text{ flex:1; font-weight:600; font-size:14px; line-height:1.4; }
-  .choices-table{ width:100%; border-collapse:collapse; }
-  .choices-table tbody tr td{ padding:9px 12px; vertical-align:middle; }
-  .choice-cell{ display:flex; align-items:center; gap:8px; white-space:nowrap; }
-  .letter{ display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:50%; background:#e8e8e8; font-size:12px; font-weight:700; flex-shrink:0; }
-  .mark-cell{ text-align:center; width:56px; border-left:1px solid #eee; }
-  .mark-box{ width:32px; height:32px; border:2px solid #bbb; border-radius:4px; margin:0 auto; }
+  .q-text{ font-weight:600; font-size:14px; line-height:1.4; }
+  .choices-row{ display:flex; flex-wrap:wrap; gap:6px 24px; padding-left:38px; }
+  .choice-item{ display:inline-flex; align-items:center; gap:6px; font-size:13px; }
+  .letter{ display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border-radius:50%; background:#e8e8e8; font-size:11px; font-weight:700; flex-shrink:0; }
+  .mark-cell{ width:56px; min-width:56px; border-left:1px solid #ddd; display:flex; align-items:center; justify-content:center; align-self:stretch; }
+  .mark-box{ width:32px; height:32px; border:2px solid #bbb; border-radius:4px; }
   .participant-name{ margin-top:28px; display:flex; align-items:center; gap:12px; font-size:13px; }
   .name-line{ flex:1; border-bottom:1.5px solid #888; height:24px; }
   .score-box{ border:1.5px solid #888; border-radius:4px; padding:4px 16px; font-size:13px; white-space:nowrap; }
@@ -102,12 +99,10 @@ function exportQuizPDF(){
 <body>
   <h1>${sessionName}</h1>
   <div class="subtitle">Quiz sheet · ${new Date().toLocaleDateString()} · ${localQs.length} question${localQs.length!==1?'s':''}</div>
-
   <div class="participant-name">
     <span>Name:</span><div class="name-line"></div>
     <div class="score-box">Score: &nbsp;&nbsp;&nbsp;&nbsp; / ${localQs.length}</div>
   </div>
-
   <div style="margin-top:22px">${rows}</div>
 </body>
 </html>`;
@@ -116,7 +111,11 @@ function exportQuizPDF(){
   win.document.write(html);
   win.document.close();
   win.focus();
-  setTimeout(()=>{ win.print(); }, 400);
+  setTimeout(()=>{
+    // suppress the about:blank URL from the print footer
+    win.document.title = sessionName;
+    win.print();
+  }, 400);
 }
 
 function showToast(msg){
