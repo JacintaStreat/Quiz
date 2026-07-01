@@ -307,7 +307,7 @@ function delQ(i){
   renderQList();
 }
 function addQ(){
-  localQs.push({id:Date.now(), text:'', choices:['','','',''], correct:0, img:null, timeLimit:20});
+  localQs.push({id:Date.now(), text:'', choices:['','','',''], correct:0, img:null, timeLimit:25});
   renderQList();
   openEditor(localQs.length-1);
 }
@@ -545,11 +545,20 @@ async function doSaveQuiz(){
   const saveBtn = document.querySelector('#modal-save button.pri');
   if(saveBtn){ saveBtn.disabled=true; saveBtn.textContent='Saving…'; }
 
-  const entry = { questions: JSON.parse(JSON.stringify(localQs)), saved: new Date().toLocaleString() };
-
   if(libraryPassphraseHash){
     try{
-      await db.ref(`savedQuizzes/${libraryPassphraseHash}/${encodeKey(name)}`).set(entry);
+      const key = encodeKey(name);
+      const base = `savedQuizzes/${libraryPassphraseHash}/${key}`;
+
+      // write meta first, then clear old questions, then write each question separately
+      await db.ref(`${base}/meta`).set({ name, saved: new Date().toLocaleString(), count: localQs.length });
+      await db.ref(`${base}/questions`).remove();
+      const questionUpdates = {};
+      localQs.forEach((q, i)=>{
+        questionUpdates[`${base}/questions/${i}`] = JSON.parse(JSON.stringify(q));
+      });
+      await db.ref().update(questionUpdates);
+
       closeModal('modal-save');
       showToast('Quiz saved');
     } catch(e){
@@ -558,8 +567,9 @@ async function doSaveQuiz(){
       err.style.color = 'var(--danger)';
     }
   } else {
+    // localStorage fallback — blob is fine here, no concurrent-write risk
     const all = JSON.parse(localStorage.getItem('quiz_saved_quizzes')||'{}');
-    all[name] = entry;
+    all[name] = { questions: JSON.parse(JSON.stringify(localQs)), saved: new Date().toLocaleString() };
     localStorage.setItem('quiz_saved_quizzes', JSON.stringify(all));
     closeModal('modal-save');
     showToast('Quiz saved');
@@ -568,19 +578,25 @@ async function doSaveQuiz(){
   if(saveBtn){ saveBtn.disabled=false; saveBtn.textContent='Save'; }
 }
 
-// Firebase keys can't contain ".", "#", "$", "[", "]", or "/" — sanitize quiz names into safe keys
+// Firebase keys can't contain ".", "#", "$", "[", "]", "/" — sanitize names
 function encodeKey(name){
   return encodeURIComponent(name).replace(/\./g,'%2E');
 }
 
 async function renderSavedList(){
   const el = document.getElementById('quiz-list-modal');
-  el.innerHTML = '<p class="sub">Loading…</p>';
+  el.innerHTML = '<p class="sub" style="display:flex;align-items:center;gap:8px"><span style="display:inline-block;width:14px;height:14px;border:2px solid var(--border-strong);border-top-color:var(--accent-strong);border-radius:50%;animation:spin .7s linear infinite"></span> Loading your quizzes…</p>';
 
   if(libraryPassphraseHash){
     try{
-      const snap = await db.ref('savedQuizzes/'+libraryPassphraseHash).get();
-      const all = snap.exists() ? snap.val() : {};
+      // only fetch meta nodes — fast, no question data downloaded yet
+      const snap = await db.ref(`savedQuizzes/${libraryPassphraseHash}`).get();
+      if(!snap.exists()){ renderSavedListInto(el, {}, true); return; }
+      const all = {};
+      snap.forEach(child=>{
+        const meta = child.val()?.meta;
+        if(meta) all[child.key] = { meta };
+      });
       renderSavedListInto(el, all, true);
     } catch(e){
       console.error('renderSavedList (shared) failed', e);
@@ -593,30 +609,39 @@ async function renderSavedList(){
 }
 
 function renderSavedListInto(el, all, isShared){
-  const names = Object.keys(all);
+  const keys = Object.keys(all);
   el.innerHTML = '';
   if(isShared){
     const hint = mk('p','sub'); hint.style.marginBottom='8px';
     hint.textContent = 'Showing quizzes saved under your current passphrase.';
     el.appendChild(hint);
   }
-  if(!names.length){
+  if(!keys.length){
     const empty = mk('p','sub'); empty.textContent='No saved quizzes yet.'; el.appendChild(empty); return;
   }
-  names.forEach(rawName=>{
-    const name = isShared ? decodeURIComponent(rawName.replace(/%2E/g,'.')) : rawName;
-    const entry = all[rawName];
+  keys.forEach(rawKey=>{
+    const entry = all[rawKey];
+    const isNewFormat = !!entry.meta;
+    const displayName  = isNewFormat ? entry.meta.name : decodeURIComponent(rawKey.replace(/%2E/g,'.'));
+    const count        = isNewFormat ? entry.meta.count : (entry.questions?.length || 0);
+    const savedDate    = isNewFormat ? entry.meta.saved : entry.saved;
+
     const row = mk('div'); row.style.cssText='display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--border)';
     const info = mk('div'); info.style.flex='1';
-    info.innerHTML = `<div style="font-weight:500">${name}</div><div style="font-size:12px;color:var(--text-muted)">${entry.questions.length} questions · ${entry.saved}</div>`;
-    const lb = mk('button','sml pri'); lb.textContent='Load'; lb.onclick=()=>loadQuiz(name, entry);
+    info.innerHTML = `<div style="font-weight:500">${displayName}</div><div style="font-size:12px;color:var(--text-muted)">${count} question${count!==1?'s':''} · ${savedDate||''}</div>`;
+
+    const lb = mk('button','sml pri'); lb.textContent='Load';
+    lb.onclick = ()=> isShared ? loadSharedQuiz(rawKey, displayName, lb) : loadLocalQuiz(displayName, entry);
+
     const delBtn = mk('button','sml'); delBtn.style.color='var(--danger)'; delBtn.textContent='Delete';
     delBtn.onclick = async ()=>{
+      if(!confirm(`Delete "${displayName}"?`)) return;
       if(isShared){
-        await db.ref(`savedQuizzes/${libraryPassphraseHash}/${rawName}`).remove();
+        await db.ref(`savedQuizzes/${libraryPassphraseHash}/${rawKey}`).remove();
       } else {
-        delete all[rawName];
-        localStorage.setItem('quiz_saved_quizzes', JSON.stringify(all));
+        const stored = JSON.parse(localStorage.getItem('quiz_saved_quizzes')||'{}');
+        delete stored[rawKey];
+        localStorage.setItem('quiz_saved_quizzes', JSON.stringify(stored));
       }
       renderSavedList();
     };
@@ -624,7 +649,31 @@ function renderSavedListInto(el, all, isShared){
   });
 }
 
-function loadQuiz(name, entry){
+async function loadSharedQuiz(rawKey, displayName, btn){
+  if(btn){ btn.disabled=true; btn.textContent='Loading…'; }
+  try{
+    const snap = await db.ref(`savedQuizzes/${libraryPassphraseHash}/${rawKey}/questions`).get();
+    if(!snap.exists()){ showToast('No questions found for this quiz'); return; }
+    const val = snap.val();
+    // Firebase returns numeric-keyed children as an object — sort and convert to array
+    const questions = Array.isArray(val)
+      ? val
+      : Object.keys(val).sort((a,b)=>Number(a)-Number(b)).map(k=>val[k]);
+    localQs = questions.filter(Boolean);
+    selQ = null;
+    document.getElementById('qeditor').innerHTML='';
+    renderQList();
+    closeModal('modal-load');
+    showToast(`Loaded "${displayName}"`);
+  } catch(e){
+    console.error('loadSharedQuiz failed', e);
+    showToast('Could not load quiz: ' + (e.message||e));
+  } finally {
+    if(btn){ btn.disabled=false; btn.textContent='Load'; }
+  }
+}
+
+function loadLocalQuiz(name, entry){
   localQs = JSON.parse(JSON.stringify(entry.questions));
   selQ = null;
   document.getElementById('qeditor').innerHTML='';
