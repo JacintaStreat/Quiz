@@ -782,6 +782,14 @@ window.addEventListener('DOMContentLoaded', ()=>{
 
 // ── PARTICIPANT VIEW ───────────────────────────────────────────────────────
 let lastTimerQ = -1;
+let pViewDebounce = null;
+
+function renderPViewDebounced(){
+  // coalesce rapid Firebase events (e.g. many participants answering at once)
+  // into a single render 100ms later
+  clearTimeout(pViewDebounce);
+  pViewDebounce = setTimeout(renderPView, 100);
+}
 
 function renderPView(){
   const s = liveState; if(!s) return;
@@ -878,20 +886,26 @@ async function submitAns(idx){
 }
 
 // ── REALTIME LISTENER — replaces polling entirely ─────────────────────────
+// ── REALTIME LISTENER ─────────────────────────────────────────────────────
+let sessionListener = null; // named function reference so we can remove it precisely
+
 function attachSessionListener(code){
-  if(sessionRef) sessionRef.off();
+  // remove any existing listener before adding a new one
+  if(sessionRef && sessionListener){
+    sessionRef.off('value', sessionListener);
+  }
+
   sessionRef = db.ref('sessions/'+code);
-  sessionRef.on('value', snap=>{
+
+  sessionListener = function(snap){
     const s = snap.val();
     if(!s) return;
     liveState = s;
-    s.questions = s.questions || [];
+    s.questions    = s.questions    || [];
     s.participants = s.participants || {};
-    s.answers = s.answers || {};
+    s.answers      = s.answers      || {};
 
     if(role==='host'){
-      // reset auto-reveal guard when question changes so a new quiz or new
-      // question at index 0 isn't blocked by a prior run's fired state
       if(s.currentQ !== lastHostTimerQ && !s.revealAnswers){
         autoRevealFiredForQ = -1;
       }
@@ -902,16 +916,18 @@ function attachSessionListener(code){
       if(pb){ if(pcount>0){ pb.style.display='inline'; pb.textContent=pcount; } else pb.style.display='none'; }
       if(document.getElementById('modal-code').style.display==='flex') updateCodeModal();
     } else if(role==='participant'){
-      // if the question has changed, reset the timer guard so the new
-      // question's countdown starts fresh regardless of prior state
       if(s.currentQ !== lastTimerQ && !s.revealAnswers){
         lastTimerQ = -1;
       }
-      const ps = document.getElementById('p-sync'); if(ps){ ps.textContent='● live'; ps.style.color='var(--success)'; }
-      renderPView();
+      const ps = document.getElementById('p-sync');
+      if(ps){ ps.textContent='● live'; ps.style.color='var(--success)'; }
+      renderPViewDebounced();
     }
-  }, err=>{
+  };
+
+  sessionRef.on('value', sessionListener, err=>{
     console.error('Firebase listener error', err);
-    const ps = document.getElementById('p-sync'); if(ps){ ps.textContent='● connection error'; ps.style.color='var(--danger)'; }
+    const ps = document.getElementById('p-sync');
+    if(ps){ ps.textContent='● connection error'; ps.style.color='var(--danger)'; }
   });
 }
