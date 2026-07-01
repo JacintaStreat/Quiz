@@ -280,6 +280,8 @@ function hTab(t){
 }
 
 // ── QUESTION BUILDER ───────────────────────────────────────────────────────
+let dragSrcIndex = null;
+
 function renderQList(){
   const el = document.getElementById('qlist');
   const cnt = document.getElementById('qcount');
@@ -288,15 +290,61 @@ function renderQList(){
   el.innerHTML = '';
   localQs.forEach((q,i)=>{
     const d = mk('div', 'qrow'+(selQ===i?' sel':''));
+    d.draggable = true;
+    d.dataset.index = i;
+
+    // drag handle
+    const handle = mk('span'); handle.textContent = '⠿';
+    handle.title = 'Drag to reorder';
+    handle.style.cssText = 'color:var(--text-muted);cursor:grab;font-size:16px;padding-right:4px;flex-shrink:0';
+
     const num = mk('span','',{style:'font-size:13px;color:var(--text-muted);min-width:20px'}); num.textContent = i+1;
     const txt = mk('span','',{style:'flex:1;font-size:15px'}); txt.innerHTML = q.text || '<em style="color:var(--text-muted)">Untitled</em>';
     const ts  = mk('span','',{style:'font-size:13px;color:var(--text-muted)'}); ts.textContent = q.timeLimit+'s';
     const del = mk('button','sml',{style:'color:var(--danger)'}); del.textContent='Delete';
     del.onclick = e=>{ e.stopPropagation(); delQ(i); };
-    d.appendChild(num); d.appendChild(txt);
+
+    d.appendChild(handle); d.appendChild(num); d.appendChild(txt);
     if(q.img){ const tag=mk('span','',{style:'font-size:12px;color:var(--text-muted)'}); tag.textContent='📷'; d.appendChild(tag); }
     d.appendChild(ts); d.appendChild(del);
     d.onclick = ()=>openEditor(i);
+
+    // drag events
+    d.addEventListener('dragstart', e=>{
+      dragSrcIndex = i;
+      e.dataTransfer.effectAllowed = 'move';
+      setTimeout(()=>d.style.opacity='0.4', 0);
+    });
+    d.addEventListener('dragend', ()=>{
+      d.style.opacity='1';
+      el.querySelectorAll('.qrow').forEach(r=>r.classList.remove('drag-over'));
+    });
+    d.addEventListener('dragover', e=>{
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      el.querySelectorAll('.qrow').forEach(r=>r.classList.remove('drag-over'));
+      d.classList.add('drag-over');
+    });
+    d.addEventListener('dragleave', ()=>d.classList.remove('drag-over'));
+    d.addEventListener('drop', e=>{
+      e.preventDefault(); e.stopPropagation();
+      d.classList.remove('drag-over');
+      const destIndex = parseInt(d.dataset.index);
+      if(dragSrcIndex === null || dragSrcIndex === destIndex) return;
+      // reorder
+      const moved = localQs.splice(dragSrcIndex, 1)[0];
+      localQs.splice(destIndex, 0, moved);
+      // keep the editor open on the moved question
+      if(selQ === dragSrcIndex) selQ = destIndex;
+      else if(selQ !== null){
+        if(dragSrcIndex < selQ && destIndex >= selQ) selQ--;
+        else if(dragSrcIndex > selQ && destIndex <= selQ) selQ++;
+      }
+      dragSrcIndex = null;
+      renderQList();
+      if(selQ !== null) openEditor(selQ);
+    });
+
     el.appendChild(d);
   });
 }
