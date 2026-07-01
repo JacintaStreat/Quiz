@@ -38,6 +38,100 @@ function mk(tag,cls,attrs){
   return el;
 }
 function setTxt(id,v){ const e=document.getElementById(id); if(e) e.textContent=v; }
+function exportQuizPDF(){
+  if(!localQs.length){ showToast('No questions to export'); return; }
+
+  const sessionName = document.getElementById('h-session-name')?.textContent || 'Quiz';
+  const letters = ['A','B','C','D','E','F'];
+
+  const rows = localQs.map((q,i)=>{
+    const choices = q.choices.filter(c=>c);
+    const choiceRows = choices.map((c,ci)=>`
+      <tr>
+        <td class="choice-cell">
+          <span class="letter">${letters[ci]}</span>
+          ${c}
+          ${ci === q.correct ? '<span class="correct-marker">✓ correct</span>' : ''}
+        </td>
+        <td class="mark-cell"><div class="mark-box"></div></td>
+      </tr>`).join('');
+
+    return `
+      <div class="question-block">
+        <div class="question-header">
+          <span class="q-num">Q${i+1}</span>
+          <span class="q-text">${q.text || '(no question text)'}</span>
+          <span class="q-time">${q.timeLimit}s</span>
+        </div>
+        <table class="choices-table">
+          <thead>
+            <tr>
+              <th class="choice-head">Answer choices</th>
+              <th class="mark-head">✓ / ✗</th>
+            </tr>
+          </thead>
+          <tbody>${choiceRows}</tbody>
+        </table>
+      </div>`;
+  }).join('');
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8"/>
+<title>${sessionName} — Quiz Sheet</title>
+<style>
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{ font-family: Arial, Helvetica, sans-serif; font-size:13px; color:#111; padding:28px 32px; }
+  h1{ font-size:20px; font-weight:700; margin-bottom:4px; }
+  .subtitle{ font-size:12px; color:#666; margin-bottom:24px; }
+  .question-block{ margin-bottom:22px; page-break-inside:avoid; border:1px solid #ddd; border-radius:6px; overflow:hidden; }
+  .question-header{ display:flex; align-items:flex-start; gap:10px; background:#f5f5f3; padding:10px 14px; border-bottom:1px solid #ddd; }
+  .q-num{ font-weight:700; font-size:14px; color:#185fa5; white-space:nowrap; min-width:28px; }
+  .q-text{ flex:1; font-weight:600; font-size:14px; line-height:1.4; }
+  .q-time{ font-size:11px; color:#888; white-space:nowrap; margin-top:2px; }
+  .choices-table{ width:100%; border-collapse:collapse; }
+  .choices-table th{ font-size:11px; color:#888; font-weight:600; text-transform:uppercase; letter-spacing:.4px; padding:6px 14px; border-bottom:1px solid #eee; background:#fafaf9; text-align:left; }
+  .mark-head{ width:70px; text-align:center; }
+  .choices-table td{ padding:8px 14px; border-bottom:1px solid #eee; vertical-align:middle; }
+  .choices-table tr:last-child td{ border-bottom:none; }
+  .choice-cell{ display:flex; align-items:center; gap:10px; }
+  .letter{ display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:50%; background:#e8e8e8; font-size:12px; font-weight:700; flex-shrink:0; }
+  .correct-marker{ font-size:11px; color:#27500a; background:#eaf3de; border:1px solid #3B6D11; border-radius:10px; padding:1px 7px; margin-left:6px; white-space:nowrap; }
+  .mark-cell{ text-align:center; width:70px; }
+  .mark-box{ width:32px; height:32px; border:2px solid #bbb; border-radius:4px; margin:0 auto; }
+  .participant-name{ margin-top:28px; display:flex; align-items:center; gap:12px; font-size:13px; }
+  .name-line{ flex:1; border-bottom:1.5px solid #888; height:24px; }
+  .score-box{ border:1.5px solid #888; border-radius:4px; padding:4px 16px; font-size:13px; white-space:nowrap; }
+  @media print{
+    body{ padding:18px 22px; }
+    @page{ margin:1.2cm; size:A4; }
+    .question-block{ page-break-inside:avoid; }
+  }
+</style>
+</head>
+<body>
+  <h1>${sessionName}</h1>
+  <div class="subtitle">Quiz backup sheet · ${new Date().toLocaleDateString()} · ${localQs.length} question${localQs.length!==1?'s':''}</div>
+
+  <div class="participant-name">
+    <span>Name:</span><div class="name-line"></div>
+    <div class="score-box">Score: &nbsp;&nbsp;&nbsp;&nbsp; / ${localQs.length}</div>
+  </div>
+
+  <div style="margin-top:22px">${rows}</div>
+</body>
+</html>`;
+
+  // open in a new tab and trigger print dialog
+  const win = window.open('', '_blank');
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  // slight delay so the browser finishes rendering before print dialog opens
+  setTimeout(()=>{ win.print(); }, 400);
+}
+
 function showToast(msg){
   const t=document.getElementById('toast');
   t.textContent=msg; t.style.display='block';
@@ -322,16 +416,43 @@ function buildImgPreview(container, src, i){
 
 function handleImg(i, e){
   const file = e.target.files[0]; if(!file) return;
-  if(file.size > 1.5*1024*1024){
-    alert('Image must be under 1.5 MB. Firebase Realtime Database stores data as text, so large images can slow things down — consider compressing the image first.');
-    return;
-  }
+  if(file.size > 10*1024*1024){ alert('Image must be under 10 MB'); return; }
+
   const reader = new FileReader();
   reader.onload = ev=>{
-    localQs[i].img = ev.target.result;
-    const prev = document.getElementById('img-preview-'+i);
-    if(prev) buildImgPreview(prev, ev.target.result, i);
-    renderQList();
+    const img = new Image();
+    img.onload = ()=>{
+      // scale down so the longest edge is at most 1200px
+      const MAX = 1200;
+      let w = img.width, h = img.height;
+      if(w > MAX || h > MAX){
+        if(w > h){ h = Math.round(h * MAX/w); w = MAX; }
+        else      { w = Math.round(w * MAX/h); h = MAX; }
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+
+      // compress to JPEG at 75% quality — good visual quality, much smaller file
+      const compressed = canvas.toDataURL('image/jpeg', 0.75);
+
+      const origKB   = Math.round(file.size / 1024);
+      const newKB    = Math.round((compressed.length * 3/4) / 1024);
+      console.log(`Image compressed: ${origKB}KB → ${newKB}KB`);
+
+      localQs[i].img = compressed;
+      const prev = document.getElementById('img-preview-'+i);
+      if(prev){
+        buildImgPreview(prev, compressed, i);
+        // show compression result to the host
+        const info = mk('div'); info.style.cssText='font-size:12px;color:var(--text-muted);margin-top:4px';
+        info.textContent = `Compressed from ${origKB}KB to ${newKB}KB`;
+        prev.appendChild(info);
+      }
+      renderQList();
+    };
+    img.src = ev.target.result;
   };
   reader.readAsDataURL(file);
 }
