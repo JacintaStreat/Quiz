@@ -594,8 +594,19 @@ async function renderSavedList(){
       if(!snap.exists()){ renderSavedListInto(el, {}, true); return; }
       const all = {};
       snap.forEach(child=>{
-        const meta = child.val()?.meta;
-        if(meta) all[child.key] = { meta };
+        const val = child.val();
+        if(!val) return;
+        if(val.meta){
+          // new per-question format
+          all[child.key] = { meta: val.meta };
+        } else if(val.questions){
+          // old blob format — synthesise a meta object from what's there
+          all[child.key] = { meta: {
+            name: decodeURIComponent(child.key.replace(/%2E/g,'.')),
+            saved: val.saved || '',
+            count: Array.isArray(val.questions) ? val.questions.length : Object.keys(val.questions).length
+          }, _oldFormat: true, _questions: val.questions };
+        }
       });
       renderSavedListInto(el, all, true);
     } catch(e){
@@ -631,7 +642,9 @@ function renderSavedListInto(el, all, isShared){
     info.innerHTML = `<div style="font-weight:500">${displayName}</div><div style="font-size:12px;color:var(--text-muted)">${count} question${count!==1?'s':''} · ${savedDate||''}</div>`;
 
     const lb = mk('button','sml pri'); lb.textContent='Load';
-    lb.onclick = ()=> isShared ? loadSharedQuiz(rawKey, displayName, lb) : loadLocalQuiz(displayName, entry);
+    lb.onclick = ()=> isShared
+      ? (entry._oldFormat ? loadOldFormatQuiz(entry._questions, displayName) : loadSharedQuiz(rawKey, displayName, lb))
+      : loadLocalQuiz(displayName, entry);
 
     const delBtn = mk('button','sml'); delBtn.style.color='var(--danger)'; delBtn.textContent='Delete';
     delBtn.onclick = async ()=>{
@@ -680,6 +693,19 @@ function loadLocalQuiz(name, entry){
   renderQList();
   closeModal('modal-load');
   showToast(`Loaded "${name}"`);
+}
+
+function loadOldFormatQuiz(questions, displayName){
+  const val = questions;
+  const arr = Array.isArray(val)
+    ? val
+    : Object.keys(val).sort((a,b)=>Number(a)-Number(b)).map(k=>val[k]);
+  localQs = arr.filter(Boolean);
+  selQ = null;
+  document.getElementById('qeditor').innerHTML='';
+  renderQList();
+  closeModal('modal-load');
+  showToast(`Loaded "${displayName}"`);
 }
 
 // ── RUN PANEL ──────────────────────────────────────────────────────────────
