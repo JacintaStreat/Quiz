@@ -107,7 +107,7 @@ function openHostSession(code, state){
   document.getElementById('h-code-inline').textContent = code;
   showScreen('s-host');
   renderQList();
-  hTab('run');
+  hTab('build');
   attachSessionListener(code);
 }
 
@@ -424,6 +424,8 @@ function showSaveModal(){
 }
 function showLoadModal(){
   document.getElementById('modal-load').style.display='flex';
+  document.getElementById('quiz-list-modal').innerHTML =
+    '<p class="sub" style="display:flex;align-items:center;gap:8px"><span style="display:inline-block;width:14px;height:14px;border:2px solid var(--border-strong);border-top-color:var(--accent-strong);border-radius:50%;animation:spin .7s linear infinite"></span> Loading your quizzes…</p>';
   renderSavedList();
 }
 
@@ -433,13 +435,16 @@ async function doSaveQuiz(){
   if(!name){ err.textContent='Enter a name'; err.style.color='var(--danger)'; return; }
   if(!localQs.length){ err.textContent='No questions to save'; err.style.color='var(--danger)'; return; }
 
+  const saveBtn = document.querySelector('#modal-save button.pri');
+  if(saveBtn){ saveBtn.disabled=true; saveBtn.textContent='Saving…'; }
+
   const entry = { questions: JSON.parse(JSON.stringify(localQs)), saved: new Date().toLocaleString() };
 
   if(libraryPassphraseHash){
     try{
       await db.ref(`savedQuizzes/${libraryPassphraseHash}/${encodeKey(name)}`).set(entry);
       closeModal('modal-save');
-      showToast(`"${name}" saved to shared library`);
+      showToast('Quiz saved');
     } catch(e){
       console.error('doSaveQuiz (shared) failed', e);
       err.textContent = 'Could not save to the shared library: ' + (e.message||e);
@@ -450,8 +455,10 @@ async function doSaveQuiz(){
     all[name] = entry;
     localStorage.setItem('quiz_saved_quizzes', JSON.stringify(all));
     closeModal('modal-save');
-    showToast(`"${name}" saved to this device`);
+    showToast('Quiz saved');
   }
+
+  if(saveBtn){ saveBtn.disabled=false; saveBtn.textContent='Save'; }
 }
 
 // Firebase keys can't contain ".", "#", "$", "[", "]", or "/" — sanitize quiz names into safe keys
