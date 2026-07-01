@@ -5,6 +5,7 @@
 
 let role = null, myName = null, sessionCode = null, activeHostTab = 'build';
 let localQs = [];
+let currentQuizName = null; // tracks the name of the currently loaded/saved quiz for auto-save
 let liveState = null;
 let selQ = null;
 let sessionRef = null; // firebase ref for the active session
@@ -495,16 +496,44 @@ function clearImg(i){
   const prev = document.getElementById('img-preview-'+i); if(prev) prev.innerHTML='';
   renderQList();
 }
-function saveQ(i){
+async function saveQ(i){
   const q = localQs[i];
   q.text = (document.getElementById('ed-text')?.value||'').trim();
-  q.timeLimit = parseInt(document.getElementById('ed-time')?.value) || 20;
+  q.timeLimit = parseInt(document.getElementById('ed-time')?.value) || 25;
   const radio = document.querySelector('input[name="correct_'+i+'"]:checked');
   q.correct = radio ? parseInt(radio.value) : 0;
   for(let ci=0; ci<q.choices.length; ci++) q.choices[ci] = (document.getElementById('ch_'+i+'_'+ci)?.value||'').trim();
   renderQList();
+
   const msg = document.getElementById('save-q-msg');
-  if(msg){ msg.textContent='Saved!'; setTimeout(()=>{ if(msg) msg.textContent=''; }, 1800); }
+
+  // auto-sync to the library if a quiz is currently open under a name
+  if(currentQuizName && libraryPassphraseHash){
+    if(msg){ msg.textContent='Saving…'; }
+    try{
+      const key = encodeKey(currentQuizName);
+      const base = `savedQuizzes/${libraryPassphraseHash}/${key}`;
+      // update meta count and write just this question's node
+      await db.ref(`${base}/meta`).update({ count: localQs.length, saved: new Date().toLocaleString() });
+      await db.ref(`${base}/questions/${i}`).set(JSON.parse(JSON.stringify(q)));
+      if(msg){ msg.textContent='Saved!'; setTimeout(()=>{ if(msg) msg.textContent=''; }, 1800); }
+    } catch(e){
+      console.error('auto-sync failed', e);
+      if(msg){ msg.textContent='Saved locally (sync failed)'; setTimeout(()=>{ if(msg) msg.textContent=''; }, 2500); }
+    }
+  } else if(currentQuizName && !libraryPassphraseHash){
+    // update localStorage
+    const all = JSON.parse(localStorage.getItem('quiz_saved_quizzes')||'{}');
+    if(all[currentQuizName]){
+      all[currentQuizName].questions = JSON.parse(JSON.stringify(localQs));
+      all[currentQuizName].saved = new Date().toLocaleString();
+      localStorage.setItem('quiz_saved_quizzes', JSON.stringify(all));
+    }
+    if(msg){ msg.textContent='Saved!'; setTimeout(()=>{ if(msg) msg.textContent=''; }, 1800); }
+  } else {
+    // no quiz name yet — just confirm the question was saved in memory
+    if(msg){ msg.textContent='Saved! (use Save quiz to store permanently)'; setTimeout(()=>{ if(msg) msg.textContent=''; }, 2500); }
+  }
 }
 
 // ── SAVE / LOAD QUIZ — shared library, scoped by a passphrase ────────────
@@ -609,6 +638,7 @@ async function doSaveQuiz(){
 
       closeModal('modal-save');
       showToast('Quiz saved');
+      currentQuizName = name;
     } catch(e){
       console.error('doSaveQuiz (shared) failed', e);
       err.textContent = 'Could not save to the shared library: ' + (e.message||e);
@@ -621,6 +651,7 @@ async function doSaveQuiz(){
     localStorage.setItem('quiz_saved_quizzes', JSON.stringify(all));
     closeModal('modal-save');
     showToast('Quiz saved');
+    currentQuizName = name;
   }
 
   if(saveBtn){ saveBtn.disabled=false; saveBtn.textContent='Save'; }
@@ -722,6 +753,7 @@ async function loadSharedQuiz(rawKey, displayName, btn){
       : Object.keys(val).sort((a,b)=>Number(a)-Number(b)).map(k=>val[k]);
     localQs = questions.filter(Boolean);
     selQ = null;
+    currentQuizName = displayName;
     document.getElementById('qeditor').innerHTML='';
     renderQList();
     closeModal('modal-load');
@@ -737,6 +769,7 @@ async function loadSharedQuiz(rawKey, displayName, btn){
 function loadLocalQuiz(name, entry){
   localQs = JSON.parse(JSON.stringify(entry.questions));
   selQ = null;
+  currentQuizName = name;
   document.getElementById('qeditor').innerHTML='';
   renderQList();
   closeModal('modal-load');
@@ -750,6 +783,7 @@ function loadOldFormatQuiz(questions, displayName){
     : Object.keys(val).sort((a,b)=>Number(a)-Number(b)).map(k=>val[k]);
   localQs = arr.filter(Boolean);
   selQ = null;
+  currentQuizName = displayName;
   document.getElementById('qeditor').innerHTML='';
   renderQList();
   closeModal('modal-load');
