@@ -514,7 +514,7 @@ async function saveQ(i){
       const key = encodeKey(currentQuizName);
       const base = `savedQuizzes/${libraryPassphraseHash}/${key}`;
       // update meta count and write just this question's node
-      await db.ref(`${base}/meta`).update({ count: localQs.length, saved: new Date().toLocaleString() });
+      await db.ref(`${base}/meta`).update({ name: currentQuizName, count: localQs.length, saved: new Date().toLocaleString() });
       await db.ref(`${base}/questions/${i}`).set(JSON.parse(JSON.stringify(q)));
       if(msg){ msg.textContent='Saved!'; setTimeout(()=>{ if(msg) msg.textContent=''; }, 1800); }
     } catch(e){
@@ -712,7 +712,9 @@ function renderSavedListInto(el, all, isShared){
   keys.forEach(rawKey=>{
     const entry = all[rawKey];
     const isNewFormat = !!entry.meta;
-    const displayName  = isNewFormat ? entry.meta.name : decodeURIComponent(rawKey.replace(/%2E/g,'.'));
+    const displayName  = isNewFormat
+      ? (entry.meta.name || decodeURIComponent(rawKey.replace(/%2E/g,'.').replace(/%20/g,' ')))
+      : decodeURIComponent(rawKey.replace(/%2E/g,'.'));
     const count        = isNewFormat ? entry.meta.count : (entry.questions?.length || 0);
     const savedDate    = isNewFormat ? entry.meta.saved : entry.saved;
 
