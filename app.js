@@ -119,6 +119,74 @@ function exportQuizPDF(){
   }, 400);
 }
 
+function exportHostPDF(){
+  if(!localQs.length){ showToast('No questions to export'); return; }
+
+  const sessionName = document.getElementById('h-session-name')?.textContent || 'Quiz';
+  const letters = ['A','B','C','D','E','F'];
+
+  const rows = localQs.map((q,i)=>{
+    const choices = q.choices.filter(c=>c);
+
+    const imgHtml = q.img
+      ? `<img src="${q.img}" alt="question image" style="max-width:100%;max-height:180px;object-fit:contain;display:block;margin:10px 0;border-radius:6px"/>`
+      : '';
+
+    const choiceRows = choices.map((c,ci)=>{
+      const isCorrect = ci === q.correct;
+      return `<tr style="${isCorrect?'background:#eaf3de;':''}">
+        <td style="padding:7px 14px;border-bottom:1px solid #eee;display:flex;align-items:center;gap:10px">
+          <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:${isCorrect?'#3B6D11':'#e8e8e8'};color:${isCorrect?'#fff':'#111'};font-size:12px;font-weight:700;flex-shrink:0">${letters[ci]}</span>
+          <span style="${isCorrect?'font-weight:700;color:#27500a':''}"> ${c}</span>
+          ${isCorrect?'<span style="margin-left:auto;font-size:12px;color:#27500a;background:#c6e9a0;border-radius:10px;padding:1px 8px;white-space:nowrap">✓ correct</span>':''}
+        </td>
+      </tr>`;
+    }).join('');
+
+    return `
+      <div style="margin-bottom:20px;page-break-inside:avoid;border:1px solid #ddd;border-radius:8px;overflow:hidden">
+        <div style="background:#f0f4ff;padding:10px 14px;border-bottom:1px solid #ddd;display:flex;align-items:flex-start;gap:10px">
+          <span style="font-weight:700;font-size:15px;color:#185fa5;min-width:30px">Q${i+1}</span>
+          <span style="font-weight:600;font-size:15px;line-height:1.4">${q.text||'(no question text)'}</span>
+          <span style="margin-left:auto;font-size:11px;color:#888;white-space:nowrap;padding-top:2px">${q.timeLimit}s</span>
+        </div>
+        ${imgHtml ? `<div style="padding:0 14px">${imgHtml}</div>` : ''}
+        <table style="width:100%;border-collapse:collapse">
+          <tbody>${choiceRows}</tbody>
+        </table>
+      </div>`;
+  }).join('');
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8"/>
+<title>${sessionName} — Host Answer Sheet</title>
+<style>
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{ font-family:Arial,Helvetica,sans-serif; font-size:13px; color:#111; padding:28px 32px; }
+  h1{ font-size:20px; font-weight:700; margin-bottom:4px; }
+  .subtitle{ font-size:12px; color:#666; margin-bottom:24px; }
+  @media print{
+    body{ padding:18px 22px; }
+    @page{ margin:1.2cm; size:A4; }
+  }
+</style>
+</head>
+<body>
+  <h1>${sessionName} — Host Answer Sheet</h1>
+  <div class="subtitle">Confidential · ${new Date().toLocaleDateString()} · ${localQs.length} question${localQs.length!==1?'s':''}</div>
+  <div>${rows}</div>
+</body>
+</html>`;
+
+  const win = window.open('', '_blank');
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  setTimeout(()=>{ win.document.title = sessionName+' — Host Answer Sheet'; win.print(); }, 400);
+}
+
 function showToast(msg){
   const t=document.getElementById('toast');
   t.textContent=msg; t.style.display='block';
