@@ -1049,7 +1049,6 @@ async function startQuiz(){
   lastHostTimerQ = -1;
   lastTimerQ = -1;
   autoRevealFiredForQ = -1;
-  questionsLoaded = true; // we just wrote them, no need to re-fetch
 }
 
 async function doReveal(){
@@ -1138,17 +1137,22 @@ async function doJoin(){
   myName = name; sessionCode = code; role = 'participant';
   document.getElementById('p-name-hdr').textContent = name;
   document.getElementById('p-session-hdr').textContent = '· ' + (root.name||'Quiz');
-
-  // pre-fetch questions now so the first render is instant
-  // (images won't be re-downloaded on every state update)
   liveState = { ...state, questions:[] };
-  try{
-    const qsnap = await db.ref('sessions/'+code+'/questions').get();
-    if(qsnap.exists()) liveState.questions = qsnap.val();
-  } catch(e){ console.warn('Could not pre-fetch questions', e); }
-
   showScreen('s-part');
-  attachSessionListener(code);
+
+  // Show holding message while we wait for questions
+  const pm = document.getElementById('p-main');
+  if(pm) pm.innerHTML = '<div class="card"><div style="font-size:17px;font-weight:600">Joining…</div><p class="sub" style="margin-top:6px">Loading quiz data, just a moment.</p></div>';
+
+  // If quiz already started, questions exist — fetch them now.
+  // If not started yet, waitForQuestions will resolve once the host clicks Start.
+  // Either way the listener only attaches AFTER questions are in memory,
+  // so the listener callback is always synchronous with no I/O.
+  waitForQuestions(code).then(questions=>{
+    liveState.questions = questions;
+    attachSessionListener(code);
+    renderPView();
+  });
 }
 
 // auto-fill code from ?join=XXXXXX in URL (from QR code scan)
@@ -1270,45 +1274,28 @@ async function submitAns(idx){
 // ── REALTIME LISTENER — replaces polling entirely ─────────────────────────
 // ── REALTIME LISTENER ─────────────────────────────────────────────────────
 let sessionListener = null; // named function so we can remove it precisely
-let watchRef = null;        // the ref the listener is attached to — must use this for .off()
-let questionsLoaded = false; // guards against re-fetching questions on every state update
+let watchRef = null;        // the ref the listener is attached to
 
 function attachSessionListener(code){
-  // always call .off() on watchRef (state subnode), not sessionRef (session root)
   if(watchRef && sessionListener){
     watchRef.off('value', sessionListener);
   }
 
-  sessionRef     = db.ref('sessions/'+code);
-  watchRef       = db.ref('sessions/'+code+'/state');
-  questionsLoaded = !!(liveState.questions && liveState.questions.length);
+  sessionRef = db.ref('sessions/'+code);
+  watchRef   = db.ref('sessions/'+code+'/state');
 
-  sessionListener = async function(snap){
+  // The listener MUST be synchronous — any async work inside causes
+  // events to stack up and fire out of order, making participants fall behind.
+  // Questions are fetched outside the listener (in doJoin / waitForQuestions).
+  sessionListener = function(snap){
     const s = snap.val();
     const incoming = s || { status:'waiting', currentQ:-1, answers:{}, participants:{}, revealAnswers:false };
 
-    // preserve the questions array — incoming state never contains images
-    const existingQs = liveState.questions || [];
+    const existingQs       = liveState.questions || [];
     liveState              = { ...liveState, ...incoming };
     liveState.questions    = existingQs;
     liveState.participants = incoming.participants || {};
     liveState.answers      = incoming.answers      || {};
-
-    // fetch questions exactly once when the quiz goes active
-    if(!questionsLoaded && incoming.status === 'active'){
-      questionsLoaded = true; // set immediately to prevent concurrent fetches
-      try{
-        const qsnap = await db.ref('sessions/'+code+'/questions').get();
-        if(qsnap.exists()){
-          liveState.questions = qsnap.val();
-        } else {
-          questionsLoaded = false; // didn't arrive yet — allow retry next event
-        }
-      } catch(e){
-        questionsLoaded = false;
-        console.warn('Could not fetch questions', e);
-      }
-    }
 
     if(role==='host'){
       if(incoming.currentQ !== lastHostTimerQ && !incoming.revealAnswers){
@@ -1334,5 +1321,25 @@ function attachSessionListener(code){
     console.error('Firebase listener error', err);
     const ps = document.getElementById('p-sync');
     if(ps){ ps.textContent='● connection error'; ps.style.color='var(--danger)'; }
+  });
+}
+
+// Waits for questions to be written to Firebase (called when participant joins
+// before quiz has started) then resolves. Uses once() so it fires exactly once.
+function waitForQuestions(code){
+  return new Promise((resolve)=>{
+    db.ref('sessions/'+code+'/questions').once('value', snap=>{
+      if(snap.exists()){
+        resolve(snap.val());
+      } else {
+        // not written yet — listen for it
+        db.ref('sessions/'+code+'/questions').on('value', function handler(s){
+          if(s.exists()){
+            db.ref('sessions/'+code+'/questions').off('value', handler);
+            resolve(s.val());
+          }
+        });
+      }
+    });
   });
 }
