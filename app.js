@@ -533,50 +533,92 @@ function buildImgPreview(container, src, i){
   cb.onclick = ()=>clearImg(i); container.appendChild(cb);
 }
 
-function handleImg(i, e){
+// Returns true if the value is a Firebase Storage URL rather than a legacy base64 string
+function isStorageUrl(val){
+  return typeof val === 'string' && (val.startsWith('https://firebasestorage') || val.startsWith('https://storage.googleapis'));
+}
+
+async function handleImg(i, e){
   const file = e.target.files[0]; if(!file) return;
   if(file.size > 10*1024*1024){ alert('Image must be under 10 MB'); return; }
 
-  const reader = new FileReader();
-  reader.onload = ev=>{
-    const img = new Image();
-    img.onload = ()=>{
-      // scale down so the longest edge is at most 1200px
-      const MAX = 1200;
-      let w = img.width, h = img.height;
-      if(w > MAX || h > MAX){
-        if(w > h){ h = Math.round(h * MAX/w); w = MAX; }
-        else      { w = Math.round(w * MAX/h); h = MAX; }
-      }
+  const prev = document.getElementById('img-preview-'+i);
 
-      const canvas = document.createElement('canvas');
-      canvas.width = w; canvas.height = h;
-      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+  // compress with canvas first
+  const compressed = await compressImage(file);
+  const origKB = Math.round(file.size / 1024);
+  const newKB  = Math.round(compressed.size / 1024);
 
-      // compress to JPEG at 75% quality — good visual quality, much smaller file
-      const compressed = canvas.toDataURL('image/jpeg', 0.75);
+  // show uploading state
+  if(prev){ prev.innerHTML = `<p class="sub">Uploading image… (${newKB}KB)</p>`; }
 
-      const origKB   = Math.round(file.size / 1024);
-      const newKB    = Math.round((compressed.length * 3/4) / 1024);
-      console.log(`Image compressed: ${origKB}KB → ${newKB}KB`);
+  try{
+    if(!storage) throw new Error('Firebase Storage not initialised');
 
-      localQs[i].img = compressed;
-      const prev = document.getElementById('img-preview-'+i);
-      if(prev){
-        buildImgPreview(prev, compressed, i);
-        // show compression result to the host
-        const info = mk('div'); info.style.cssText='font-size:12px;color:var(--text-muted);margin-top:4px';
-        info.textContent = `Compressed from ${origKB}KB to ${newKB}KB`;
-        prev.appendChild(info);
-      }
-      renderQList();
-    };
-    img.src = ev.target.result;
-  };
-  reader.readAsDataURL(file);
+    // upload to Firebase Storage under quiz-images/{timestamp}-{filename}
+    const path = `quiz-images/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.]/g,'_')}`;
+    const ref  = storage.ref(path);
+    await ref.put(compressed);
+    const url  = await ref.getDownloadURL();
+
+    // delete old Storage image if there was one
+    const oldImg = localQs[i].img;
+    if(oldImg && isStorageUrl(oldImg)){
+      try{ await storage.refFromURL(oldImg).delete(); } catch(e){ /* ignore — already deleted */ }
+    }
+
+    localQs[i].img     = url;
+    localQs[i].imgPath = path; // store path so we can delete it later
+
+    if(prev){
+      buildImgPreview(prev, url, i);
+      const info = mk('div'); info.style.cssText='font-size:12px;color:var(--text-muted);margin-top:4px';
+      info.textContent = `Uploaded (${origKB}KB → ${newKB}KB compressed)`;
+      prev.appendChild(info);
+    }
+    renderQList();
+  } catch(err){
+    console.error('Image upload failed', err);
+    if(prev){ prev.innerHTML = `<p class="sub" style="color:var(--danger)">Upload failed: ${err.message}</p>`; }
+  }
 }
-function clearImg(i){
-  localQs[i].img = null;
+
+// Compress image using canvas before uploading
+function compressImage(file){
+  return new Promise(resolve=>{
+    const reader = new FileReader();
+    reader.onload = ev=>{
+      const img = new Image();
+      img.onload = ()=>{
+        const MAX = 1200;
+        let w = img.width, h = img.height;
+        if(w > MAX || h > MAX){
+          if(w > h){ h = Math.round(h * MAX/w); w = MAX; }
+          else      { w = Math.round(w * MAX/h); h = MAX; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        canvas.toBlob(blob=>resolve(blob), 'image/jpeg', 0.75);
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function clearImg(i){
+  const oldImg  = localQs[i].img;
+  const oldPath = localQs[i].imgPath;
+  // delete from Firebase Storage if it's a Storage URL
+  if(storage && oldImg && isStorageUrl(oldImg)){
+    try{
+      const ref = oldPath ? storage.ref(oldPath) : storage.refFromURL(oldImg);
+      await ref.delete();
+    } catch(e){ console.warn('Could not delete old image from Storage', e); }
+  }
+  localQs[i].img     = null;
+  localQs[i].imgPath = null;
   const prev = document.getElementById('img-preview-'+i); if(prev) prev.innerHTML='';
   renderQList();
 }
@@ -706,12 +748,33 @@ async function doSaveQuiz(){
   const saveBtn = document.querySelector('#modal-save button.pri');
   if(saveBtn){ saveBtn.disabled=true; saveBtn.textContent='Saving…'; }
 
+  // migrate any legacy base64 images to Firebase Storage before saving
+  if(storage && libraryPassphraseHash){
+    for(let i=0; i<localQs.length; i++){
+      const q = localQs[i];
+      if(q.img && !isStorageUrl(q.img)){
+        try{
+          if(saveBtn) saveBtn.textContent = `Uploading image ${i+1}/${localQs.length}…`;
+          const blob = await base64ToBlob(q.img);
+          const path = `quiz-images/${Date.now()}-q${i}.jpg`;
+          const ref  = storage.ref(path);
+          await ref.put(blob);
+          q.img     = await ref.getDownloadURL();
+          q.imgPath = path;
+        } catch(e){
+          console.warn(`Could not migrate image for question ${i+1}`, e);
+        }
+      }
+    }
+  }
+
+  if(saveBtn) saveBtn.textContent = 'Saving…';
+
   if(libraryPassphraseHash){
     try{
       const key = encodeKey(name);
       const base = `savedQuizzes/${libraryPassphraseHash}/${key}`;
 
-      // write meta first, then clear old questions, then write each question separately
       await db.ref(`${base}/meta`).set({ name, saved: new Date().toLocaleString(), count: localQs.length });
       await db.ref(`${base}/questions`).remove();
       const questionUpdates = {};
@@ -729,7 +792,6 @@ async function doSaveQuiz(){
       err.style.color = 'var(--danger)';
     }
   } else {
-    // localStorage fallback — blob is fine here, no concurrent-write risk
     const all = JSON.parse(localStorage.getItem('quiz_saved_quizzes')||'{}');
     all[name] = { questions: JSON.parse(JSON.stringify(localQs)), saved: new Date().toLocaleString() };
     localStorage.setItem('quiz_saved_quizzes', JSON.stringify(all));
@@ -739,6 +801,13 @@ async function doSaveQuiz(){
   }
 
   if(saveBtn){ saveBtn.disabled=false; saveBtn.textContent='Save'; }
+}
+
+// Convert a base64 data URL to a Blob for upload
+function base64ToBlob(dataUrl){
+  return new Promise(resolve=>{
+    fetch(dataUrl).then(r=>r.blob()).then(resolve);
+  });
 }
 
 // Firebase keys can't contain ".", "#", "$", "[", "]", "/" — sanitize names
@@ -1036,7 +1105,26 @@ function questionsRef(){ return db.ref('sessions/'+sessionCode+'/questions'); }
 
 async function startQuiz(){
   if(!localQs.length){ alert('Add questions first'); return; }
-  // write questions once — never included in live state syncs again
+
+  // migrate any remaining base64 images to Storage so only tiny URLs
+  // go into Firebase Realtime Database — keeps the payload tiny
+  if(storage){
+    for(let i=0; i<localQs.length; i++){
+      const q = localQs[i];
+      if(q.img && !isStorageUrl(q.img)){
+        try{
+          const blob = await base64ToBlob(q.img);
+          const path = `quiz-images/${Date.now()}-q${i}.jpg`;
+          const ref  = storage.ref(path);
+          await ref.put(blob);
+          q.img     = await ref.getDownloadURL();
+          q.imgPath = path;
+        } catch(e){ console.warn(`Could not migrate image for Q${i+1}`, e); }
+      }
+    }
+  }
+
+  // write questions (URLs only, no base64) once — never synced again
   await questionsRef().set(localQs.map(q=>JSON.parse(JSON.stringify(q))));
   // write lightweight live state
   const activeState = {

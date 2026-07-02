@@ -20,14 +20,13 @@ const firebaseConfig = {
 };
 
 
-
-
-
 // Initialize Firebase — do not edit below this line
 try{
   firebase.initializeApp(firebaseConfig);
-  var db = firebase.database();
+  var db      = firebase.database();
+  var storage = firebase.storage();
 } catch(e){
   console.error('Firebase initialization failed:', e);
   var db = null;
+  var storage = null;
 }
