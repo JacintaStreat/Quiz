@@ -860,6 +860,9 @@ function loadOldFormatQuiz(questions, displayName){
   showToast(`Loaded "${displayName}"`);
 }
 
+// returns the questions array from the right source depending on role
+function getQuestions(){ return (role==='host' ? localQs : (liveState.questions||[])); }
+
 // ── RUN PANEL ──────────────────────────────────────────────────────────────
 let lastHostTimerQ = -1;
 
@@ -870,7 +873,7 @@ function renderRunPanel(full){
   const acount = Object.keys(ans).length;
 
   setTxt('r-pcount', pcount);
-  setTxt('r-qnum', s.currentQ>=0 ? `${s.currentQ+1}/${s.questions.length}` : '—');
+  setTxt('r-qnum', s.currentQ>=0 ? `${s.currentQ+1}/${getQuestions().length}` : '—');
   setTxt('r-resp', s.currentQ>=0 ? acount : '—');
   const rb = document.getElementById('r-badge'); if(rb){ rb.className='badge '+s.status; rb.textContent=s.status; }
 
@@ -897,12 +900,12 @@ function renderRunPanel(full){
     }
 
   } else if(s.status==='active'){
-    const q = s.questions[s.currentQ];
+    const q = getQuestions()[s.currentQ];
     if(q){
       const card = mk('div','card');
       if(q.img){ const im=mk('img','qimg'); im.src=q.img; im.alt=''; card.appendChild(im); }
       const qt = mk('div'); qt.style.cssText = `font-size:18px;font-weight:600;margin-top:${q.img?'12px':'0'}`; qt.textContent = q.text||'(no text)'; card.appendChild(qt);
-      const qm = mk('div'); qm.style.cssText = 'font-size:13px;color:var(--text-muted);margin-top:8px'; qm.textContent = `Question ${s.currentQ+1} of ${s.questions.length}`; card.appendChild(qm);
+      const qm = mk('div'); qm.style.cssText = 'font-size:13px;color:var(--text-muted);margin-top:8px'; qm.textContent = `Question ${s.currentQ+1} of ${getQuestions().length}`; card.appendChild(qm);
       const timerEl = mk('div'); timerEl.id='r-timer'; timerEl.style.cssText='font-size:28px;font-weight:700;margin-top:10px;color:var(--accent)'; card.appendChild(timerEl);
 
       const ansForQ = s.answers?.[s.currentQ] || {};
@@ -932,7 +935,7 @@ function renderRunPanel(full){
       qd.appendChild(card);
     }
     const rv = mk('button'); rv.textContent='Reveal answers'; rv.disabled = s.revealAnswers; rv.onclick=doReveal; ctrl.appendChild(rv);
-    const nx = mk('button','pri'); nx.textContent='Next question'; nx.disabled = !s.revealAnswers || (s.currentQ >= s.questions.length-1); nx.onclick=doNext; ctrl.appendChild(nx);
+    const nx = mk('button','pri'); nx.textContent='Next question'; nx.disabled = !s.revealAnswers || (s.currentQ >= getQuestions().length-1); nx.onclick=doNext; ctrl.appendChild(nx);
     const en = mk('button','red'); en.textContent='End quiz'; en.onclick=doEnd; ctrl.appendChild(en);
     if(s.revealAnswers){
       clearTimerInterval();
@@ -946,11 +949,10 @@ function renderRunPanel(full){
   } else { // done
     qd.innerHTML = '<div class="card" style="color:var(--success);font-size:17px;font-weight:600">Quiz finished!</div>';
     const rs = mk('button'); rs.textContent='New round';
-    rs.onclick = ()=>{
+    rs.onclick = async ()=>{
       if(confirm('Reset scores and start again?')){
-        const reset = blankLive(s.code, s.name);
-        reset.questions = s.questions;
-        sessionRef.set(reset);
+        const fresh = { status:'waiting', currentQ:-1, answers:{}, participants:{}, revealAnswers:false };
+        await stateRef().set(fresh);
       }
     };
     ctrl.appendChild(rs);
@@ -1025,19 +1027,17 @@ async function startQuiz(){
 
 async function doReveal(){
   if(!sessionRef) return;
-
-  // Pull the freshest copy directly from Firebase rather than trusting the
-  // local liveState cache — a participant's answer may have been written
-  // to the database moments ago but not yet propagated to this listener.
-  // Scoring off a stale snapshot (and then .set()-ing it back) can silently
-  // overwrite real answers that hadn't synced down yet.
-  const snap = await sessionRef.get();
+  // fetch fresh state and answers to avoid stale-cache scoring errors
+  const snap = await stateRef().get();
   const s = snap.val();
   if(!s) return;
-  if(s.revealAnswers) { liveState = s; return; } // already revealed elsewhere — avoid double-scoring
+  if(s.revealAnswers) { liveState = {...liveState, ...s}; return; }
 
-  s.revealAnswers = true;
-  const q = s.questions[s.currentQ];
+  // correct answer index lives in localQs (host) or liveState.questions (participant)
+  const questions = localQs.length ? localQs : (liveState.questions||[]);
+  const q = questions[s.currentQ];
+  if(!q) return;
+
   const ans = s.answers?.[s.currentQ] || {};
   s.participants = s.participants || {};
   Object.entries(ans).forEach(([name,a])=>{
@@ -1046,25 +1046,26 @@ async function doReveal(){
       s.participants[name].score = (s.participants[name].score||0) + 1;
     }
   });
-  liveState = s;
-  await sessionRef.set(s);
+  s.revealAnswers = true;
+  liveState = {...liveState, ...s};
+  await stateRef().set(s);
 }
 
 async function doNext(){
   const s = liveState;
-  if(s.currentQ >= s.questions.length-1) return;
+  const qCount = s.questionCount || (localQs.length || 0);
+  if(s.currentQ >= qCount-1) return;
   s.currentQ++;
   s.revealAnswers = false;
   s.questionStartedAt = Date.now();
-  // reset timer guards so the new question's timer starts fresh on all devices
   lastHostTimerQ = -1;
   lastTimerQ = -1;
-  await sessionRef.set(s);
+  await stateRef().set(s);
 }
 
 async function doEnd(){
   liveState.status = 'done';
-  await sessionRef.set(liveState);
+  await stateRef().set(liveState);
 }
 
 function renderLB(elId, highlightName){
@@ -1089,23 +1090,36 @@ async function doJoin(){
   if(!code || code.length!==6){ err.textContent='Enter the 6-digit code'; return; }
   if(!name){ err.textContent='Enter your name'; return; }
 
-  const snap = await db.ref('sessions/'+code).get();
-  if(!snap.exists()){ err.textContent='Session not found — check the code'; return; }
-  const s = snap.val();
+  // read the session root for name/existence check, then state for participants
+  const rootSnap = await db.ref('sessions/'+code).get();
+  if(!rootSnap.exists()){ err.textContent='Session not found — check the code'; return; }
+  const root = rootSnap.val();
 
-  const participants = s.participants || {};
+  const stateSnap = await db.ref('sessions/'+code+'/state').get();
+  const state = stateSnap.exists() ? stateSnap.val() : {};
+  const participants = state.participants || {};
+
   if(Object.keys(participants).length >= 50 && !participants[name]){
     err.textContent = 'Session is full (50 max)'; return;
   }
 
-  await db.ref(`sessions/${code}/participants/${name}`).set({
+  await db.ref(`sessions/${code}/state/participants/${name}`).set({
     score: participants[name]?.score || 0,
     joined: Date.now()
   });
 
   myName = name; sessionCode = code; role = 'participant';
   document.getElementById('p-name-hdr').textContent = name;
-  document.getElementById('p-session-hdr').textContent = '· ' + s.name;
+  document.getElementById('p-session-hdr').textContent = '· ' + (root.name||'Quiz');
+
+  // pre-fetch questions now so the first render is instant
+  // (images won't be re-downloaded on every state update)
+  liveState = { ...state, questions:[] };
+  try{
+    const qsnap = await db.ref('sessions/'+code+'/questions').get();
+    if(qsnap.exists()) liveState.questions = qsnap.val();
+  } catch(e){ console.warn('Could not pre-fetch questions', e); }
+
   showScreen('s-part');
   attachSessionListener(code);
 }
@@ -1223,7 +1237,7 @@ function renderPView(){
 async function submitAns(idx){
   const s = liveState; if(!s) return;
   if((s.answers?.[s.currentQ]||{})[myName] !== undefined) return;
-  await db.ref(`sessions/${sessionCode}/answers/${s.currentQ}/${myName}`).set(idx);
+  await db.ref(`sessions/${sessionCode}/state/answers/${s.currentQ}/${myName}`).set(idx);
 }
 
 // ── REALTIME LISTENER — replaces polling entirely ─────────────────────────
@@ -1231,20 +1245,33 @@ async function submitAns(idx){
 let sessionListener = null; // named function reference so we can remove it precisely
 
 function attachSessionListener(code){
-  // remove any existing listener before adding a new one
   if(sessionRef && sessionListener){
     sessionRef.off('value', sessionListener);
   }
 
+  // sessionRef points to the full session for one-off reads/writes (join, delete etc)
   sessionRef = db.ref('sessions/'+code);
 
-  sessionListener = function(snap){
+  // but the live listener only watches the lightweight 'state' subnode —
+  // questions (with images) are fetched once separately and never re-synced
+  const watchRef = db.ref('sessions/'+code+'/state');
+
+  sessionListener = async function(snap){
     const s = snap.val();
     if(!s) return;
-    liveState = s;
-    s.questions    = s.questions    || [];
-    s.participants = s.participants || {};
-    s.answers      = s.answers      || {};
+
+    // merge incoming state with existing liveState so we keep the questions array
+    liveState = { ...liveState, ...s };
+    liveState.participants = s.participants || {};
+    liveState.answers      = s.answers      || {};
+
+    // fetch questions once if we don't have them yet (e.g. participant joining mid-quiz)
+    if(!liveState.questions || !liveState.questions.length){
+      try{
+        const qsnap = await db.ref('sessions/'+code+'/questions').get();
+        if(qsnap.exists()) liveState.questions = qsnap.val();
+      } catch(e){ console.warn('Could not fetch questions', e); }
+    }
 
     if(role==='host'){
       if(s.currentQ !== lastHostTimerQ && !s.revealAnswers){
@@ -1266,7 +1293,7 @@ function attachSessionListener(code){
     }
   };
 
-  sessionRef.on('value', sessionListener, err=>{
+  watchRef.on('value', sessionListener, err=>{
     console.error('Firebase listener error', err);
     const ps = document.getElementById('p-sync');
     if(ps){ ps.textContent='● connection error'; ps.style.color='var(--danger)'; }
