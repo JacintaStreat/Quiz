@@ -1006,7 +1006,7 @@ function renderRunPanel(full){
 
   if(s.status==='waiting'){
     qd.innerHTML = '<p class="sub">Share your code with participants, then start the quiz once everyone has joined.</p>';
-    const b = mk('button','pri'); b.textContent='Start quiz'; b.disabled = !localQs.length; b.onclick=startQuiz; ctrl.appendChild(b);
+    const b = mk('button','pri'); b.id='start-quiz-btn'; b.textContent='Start quiz'; b.disabled = !localQs.length; b.onclick=startQuiz; ctrl.appendChild(b);
     const sc = mk('button'); sc.textContent='Show code'; sc.onclick=showCodeModal; ctrl.appendChild(sc);
     if(!localQs.length){
       const hint = mk('div'); hint.style.cssText='width:100%;font-size:13px;color:var(--warning);margin-top:8px';
@@ -1136,6 +1136,12 @@ function questionsRef(){ return db.ref('sessions/'+sessionCode+'/questions'); }
 async function startQuiz(){
   if(!localQs.length){ alert('Add questions first'); return; }
 
+  // show "starting" state immediately so the host knows something is happening
+  const startBtn = document.getElementById('start-quiz-btn');
+  if(startBtn){ startBtn.disabled=true; startBtn.textContent='Starting quiz…'; }
+  const qd = document.getElementById('r-qdisplay');
+  if(qd) qd.innerHTML = '<div class="card"><div style="font-size:16px;font-weight:500">Preparing quiz…</div><p class="sub" style="margin-top:6px">Uploading images and writing questions. This may take a moment.</p></div>';
+
   // migrate any remaining base64 images to Storage so only tiny URLs
   // go into Firebase Realtime Database — keeps the payload tiny
   if(storage){
@@ -1143,6 +1149,7 @@ async function startQuiz(){
       const q = localQs[i];
       if(q.img && !isStorageUrl(q.img)){
         try{
+          if(startBtn) startBtn.textContent = `Uploading image ${i+1}/${localQs.length}…`;
           const blob = await base64ToBlob(q.img);
           const path = `quiz-images/${Date.now()}-q${i}.jpg`;
           const ref  = storage.ref(path);
@@ -1153,6 +1160,8 @@ async function startQuiz(){
       }
     }
   }
+
+  if(startBtn) startBtn.textContent = 'Writing questions…';
 
   // write questions (URLs only, no base64) once — never synced again
   await questionsRef().set(localQs.map(q=>JSON.parse(JSON.stringify(q))));
@@ -1258,19 +1267,11 @@ async function doJoin(){
   liveState = { ...state, questions:[] };
   showScreen('s-part');
 
-  // Show holding message while we wait for questions
-  const pm = document.getElementById('p-main');
-  if(pm) pm.innerHTML = '<div class="card"><div style="font-size:17px;font-weight:600">Joining…</div><p class="sub" style="margin-top:6px">Loading quiz data, just a moment.</p></div>';
-
-  // If quiz already started, questions exist — fetch them now.
-  // If not started yet, waitForQuestions will resolve once the host clicks Start.
-  // Either way the listener only attaches AFTER questions are in memory,
-  // so the listener callback is always synchronous with no I/O.
-  waitForQuestions(code).then(questions=>{
-    liveState.questions = questions;
-    attachSessionListener(code);
-    renderPView();
-  });
+  // Attach the listener immediately so the participant gets live state updates
+  // right away — this shows "Waiting for host to start" correctly.
+  // Questions are fetched separately only when the quiz goes active.
+  attachSessionListener(code);
+  renderPView();
 }
 
 // auto-fill code from ?join=XXXXXX in URL (from QR code scan)
@@ -1431,6 +1432,22 @@ function attachSessionListener(code){
       }
       const ps = document.getElementById('p-sync');
       if(ps){ ps.textContent='● live'; ps.style.color='var(--success)'; }
+
+      // if quiz just went active but questions haven't arrived yet, fetch them
+      // this is the only I/O in the listener — it shows a loading state and
+      // renders once questions arrive; all other events render synchronously
+      if(incoming.status === 'active' && !liveState.questions.length){
+        const el = document.getElementById('p-main');
+        if(el) el.innerHTML = '<div class="card"><div style="font-size:17px;font-weight:600">Loading questions…</div><p class="sub" style="margin-top:6px">Almost there!</p></div>';
+        db.ref('sessions/'+code+'/questions').get().then(qsnap=>{
+          if(qsnap.exists()){
+            liveState.questions = qsnap.val();
+            renderPView();
+          }
+        });
+        return; // don't renderPView yet — the .then() above handles it
+      }
+
       renderPViewDebounced();
     }
   };
@@ -1442,22 +1459,4 @@ function attachSessionListener(code){
   });
 }
 
-// Waits for questions to be written to Firebase (called when participant joins
-// before quiz has started) then resolves. Uses once() so it fires exactly once.
-function waitForQuestions(code){
-  return new Promise((resolve)=>{
-    db.ref('sessions/'+code+'/questions').once('value', snap=>{
-      if(snap.exists()){
-        resolve(snap.val());
-      } else {
-        // not written yet — listen for it
-        db.ref('sessions/'+code+'/questions').on('value', function handler(s){
-          if(s.exists()){
-            db.ref('sessions/'+code+'/questions').off('value', handler);
-            resolve(s.val());
-          }
-        });
-      }
-    });
-  });
-}
+// ── END OF FILE ───────────────────────────────────────────────────────────
