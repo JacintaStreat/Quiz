@@ -1049,6 +1049,7 @@ async function startQuiz(){
   lastHostTimerQ = -1;
   lastTimerQ = -1;
   autoRevealFiredForQ = -1;
+  questionsLoaded = true; // we just wrote them, no need to re-fetch
 }
 
 async function doReveal(){
@@ -1268,50 +1269,59 @@ async function submitAns(idx){
 
 // ── REALTIME LISTENER — replaces polling entirely ─────────────────────────
 // ── REALTIME LISTENER ─────────────────────────────────────────────────────
-let sessionListener = null; // named function reference so we can remove it precisely
+let sessionListener = null; // named function so we can remove it precisely
+let watchRef = null;        // the ref the listener is attached to — must use this for .off()
+let questionsLoaded = false; // guards against re-fetching questions on every state update
 
 function attachSessionListener(code){
-  if(sessionRef && sessionListener){
-    sessionRef.off('value', sessionListener);
+  // always call .off() on watchRef (state subnode), not sessionRef (session root)
+  if(watchRef && sessionListener){
+    watchRef.off('value', sessionListener);
   }
 
-  // sessionRef points to the full session for one-off reads/writes (join, delete etc)
-  sessionRef = db.ref('sessions/'+code);
-
-  // but the live listener only watches the lightweight 'state' subnode —
-  // questions (with images) are fetched once separately and never re-synced
-  const watchRef = db.ref('sessions/'+code+'/state');
+  sessionRef     = db.ref('sessions/'+code);
+  watchRef       = db.ref('sessions/'+code+'/state');
+  questionsLoaded = !!(liveState.questions && liveState.questions.length);
 
   sessionListener = async function(snap){
     const s = snap.val();
-    // s can be null before the quiz starts if state subnode isn't written yet — treat as waiting
     const incoming = s || { status:'waiting', currentQ:-1, answers:{}, participants:{}, revealAnswers:false };
 
-    // merge incoming state with existing liveState so we preserve the questions array
-    liveState = { ...liveState, ...incoming };
+    // preserve the questions array — incoming state never contains images
+    const existingQs = liveState.questions || [];
+    liveState              = { ...liveState, ...incoming };
+    liveState.questions    = existingQs;
     liveState.participants = incoming.participants || {};
     liveState.answers      = incoming.answers      || {};
 
-    // fetch questions once if we don't have them yet (participant joining mid-quiz)
-    if((!liveState.questions || !liveState.questions.length) && incoming.status === 'active'){
+    // fetch questions exactly once when the quiz goes active
+    if(!questionsLoaded && incoming.status === 'active'){
+      questionsLoaded = true; // set immediately to prevent concurrent fetches
       try{
         const qsnap = await db.ref('sessions/'+code+'/questions').get();
-        if(qsnap.exists()) liveState.questions = qsnap.val();
-      } catch(e){ console.warn('Could not fetch questions', e); }
+        if(qsnap.exists()){
+          liveState.questions = qsnap.val();
+        } else {
+          questionsLoaded = false; // didn't arrive yet — allow retry next event
+        }
+      } catch(e){
+        questionsLoaded = false;
+        console.warn('Could not fetch questions', e);
+      }
     }
 
     if(role==='host'){
-      if(s.currentQ !== lastHostTimerQ && !s.revealAnswers){
+      if(incoming.currentQ !== lastHostTimerQ && !incoming.revealAnswers){
         autoRevealFiredForQ = -1;
       }
       if(activeHostTab==='run') renderRunPanel(true);
       else if(activeHostTab==='lb') renderLB('h-lb', null);
       const pb = document.getElementById('ht-pbadge');
-      const pcount = Object.keys(s.participants).length;
+      const pcount = Object.keys(incoming.participants||{}).length;
       if(pb){ if(pcount>0){ pb.style.display='inline'; pb.textContent=pcount; } else pb.style.display='none'; }
       if(document.getElementById('modal-code').style.display==='flex') updateCodeModal();
     } else if(role==='participant'){
-      if(s.currentQ !== lastTimerQ && !s.revealAnswers){
+      if(incoming.currentQ !== lastTimerQ && !incoming.revealAnswers){
         lastTimerQ = -1;
       }
       const ps = document.getElementById('p-sync');
