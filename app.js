@@ -234,7 +234,7 @@ async function createSession(){
     mine.unshift({code, name, created: Date.now()});
     localStorage.setItem('quiz_my_sessions', JSON.stringify(mine.slice(0,10)));
 
-    openHostSession(code, state);
+    openHostSession(code, { code, name, created: Date.now() }, waitingState);
   } catch(e){
     console.error('createSession failed:', e);
     if(errEl) errEl.textContent = 'Failed to create session: ' + (e.message || e);
@@ -244,9 +244,13 @@ async function createSession(){
 }
 
 async function resumeSession(code){
-  const snap = await db.ref('sessions/'+code).get();
-  if(!snap.exists()){ showToast('Session not found — it may have expired'); return; }
-  openHostSession(code, snap.val());
+  const rootSnap = await db.ref('sessions/'+code).get();
+  if(!rootSnap.exists()){ showToast('Session not found — it may have expired'); return; }
+  const root = rootSnap.val();
+  // fetch current state subnode so liveState reflects actual quiz progress
+  const stateSnap = await db.ref('sessions/'+code+'/state').get();
+  const currentState = stateSnap.exists() ? stateSnap.val() : { status:'waiting', currentQ:-1, answers:{}, participants:{}, revealAnswers:false };
+  openHostSession(code, root, currentState);
   // fetch existing questions if the quiz was previously started
   try{
     const qsnap = await db.ref('sessions/'+code+'/questions').get();
@@ -254,14 +258,17 @@ async function resumeSession(code){
   } catch(e){ console.warn('Could not load questions', e); }
 }
 
-function openHostSession(code, rootData){
+function openHostSession(code, rootData, currentState){
   sessionCode = code;
-  // liveState is built from the state subnode; for a new session that's the waiting state
-  liveState = { status:'waiting', currentQ:-1, answers:{}, participants:{},
-                revealAnswers:false, name: rootData.name||'Quiz', code };
+  liveState = { ...(currentState || {}), name: rootData.name||'Quiz', code,
+                status: currentState?.status || 'waiting',
+                currentQ: currentState?.currentQ ?? -1,
+                answers: currentState?.answers || {},
+                participants: currentState?.participants || {},
+                revealAnswers: currentState?.revealAnswers || false };
   localQs = [];
   role = 'host';
-  document.getElementById('h-session-name').textContent = state.name;
+  document.getElementById('h-session-name').textContent = rootData.name||'Quiz';
   document.getElementById('h-code-inline').textContent = code;
   showScreen('s-host');
   renderQList();
