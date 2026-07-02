@@ -20,7 +20,7 @@
 }
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);line-height:1.5}
-.wrap{max-width:640px;margin:0 auto;padding:20px 16px 60px}
+.wrap{max-width:900px;margin:0 auto;padding:16px 20px 40px}
 .screen{display:none}.screen.active{display:block}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:14px}
 h1{font-size:26px;font-weight:600;margin-bottom:6px}
@@ -167,13 +167,11 @@ img.qimg{max-width:100%;max-height:240px;border-radius:var(--radius);display:blo
     </div>
 
     <div id="hp-run" style="display:none">
-      <div class="card">
-        <div class="stat-grid">
-          <div><div class="stat-lbl">Participants</div><div class="stat-val" id="r-pcount">0</div></div>
-          <div><div class="stat-lbl">Question</div><div class="stat-val" id="r-qnum">—</div></div>
-          <div><div class="stat-lbl">Responses</div><div class="stat-val" id="r-resp">—</div></div>
-          <div><div class="stat-lbl">Status</div><div style="margin-top:4px"><span class="badge waiting" id="r-badge">waiting</span></div></div>
-        </div>
+      <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:12px">
+        <div style="display:flex;align-items:center;gap:6px"><span style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;font-weight:600">Participants</span><span style="font-size:17px;font-weight:700" id="r-pcount">0</span></div>
+        <div style="display:flex;align-items:center;gap:6px"><span style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;font-weight:600">Question</span><span style="font-size:17px;font-weight:700" id="r-qnum">—</span></div>
+        <div style="display:flex;align-items:center;gap:6px"><span style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;font-weight:600">Responses</span><span style="font-size:17px;font-weight:700" id="r-resp">—</span></div>
+        <div style="margin-left:auto"><span class="badge waiting" id="r-badge">waiting</span></div>
       </div>
       <div id="r-qdisplay"></div>
       <div id="r-ctrl" class="row mt2"></div>

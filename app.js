@@ -1019,12 +1019,42 @@ function renderRunPanel(full){
   } else if(s.status==='active'){
     const q = getQuestions()[s.currentQ];
     if(q){
-      const card = mk('div','card');
-      if(q.img){ const im=mk('img','qimg'); im.src=q.img; im.alt=''; card.appendChild(im); }
-      const qt = mk('div'); qt.style.cssText = `font-size:18px;font-weight:600;margin-top:${q.img?'12px':'0'}`; qt.textContent = q.text||'(no text)'; card.appendChild(qt);
-      const qm = mk('div'); qm.style.cssText = 'font-size:13px;color:var(--text-muted);margin-top:8px'; qm.textContent = `Question ${s.currentQ+1} of ${getQuestions().length}`; card.appendChild(qm);
-      const timerEl = mk('div'); timerEl.id='r-timer'; timerEl.style.cssText='font-size:28px;font-weight:700;margin-top:10px;color:var(--accent)'; card.appendChild(timerEl);
+      // two-column layout: image left, question+answers right
+      const layout = mk('div');
+      layout.style.cssText = 'display:grid;grid-template-columns:' + (q.img ? '1fr 1fr' : '1fr') + ';gap:16px;align-items:start';
 
+      // ── LEFT: image (only if present) ──────────────────────────────────
+      if(q.img){
+        const imgCol = mk('div');
+        imgCol.style.cssText = 'position:sticky;top:0';
+        const im = mk('img','qimg');
+        im.src = q.img; im.alt = '';
+        im.style.cssText = 'width:100%;max-height:420px;object-fit:contain;border-radius:10px;display:block';
+        imgCol.appendChild(im);
+        layout.appendChild(imgCol);
+      }
+
+      // ── RIGHT: question, meta, timer, answers ───────────────────────────
+      const rightCol = mk('div');
+
+      // question text + meta row
+      const qhead = mk('div');
+      qhead.style.cssText = 'display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px';
+      const qtxt = mk('div');
+      qtxt.style.cssText = 'font-size:18px;font-weight:600;line-height:1.4;flex:1';
+      qtxt.textContent = q.text||'(no text)';
+      const qmeta = mk('div');
+      qmeta.style.cssText = 'font-size:12px;color:var(--text-muted);white-space:nowrap;padding-top:4px';
+      qmeta.textContent = `Q${s.currentQ+1} of ${getQuestions().length}`;
+      qhead.appendChild(qtxt); qhead.appendChild(qmeta);
+      rightCol.appendChild(qhead);
+
+      // timer
+      const timerEl = mk('div'); timerEl.id='r-timer';
+      timerEl.style.cssText = 'font-size:32px;font-weight:700;color:var(--accent);margin-bottom:14px';
+      rightCol.appendChild(timerEl);
+
+      // answers
       const ansForQ = s.answers?.[s.currentQ] || {};
       const totalAns = Object.keys(ansForQ).length;
       const counts = {};
@@ -1033,24 +1063,48 @@ function renderRunPanel(full){
       q.choices.forEach((c,ci)=>{
         if(!c) return;
         const isCorrect = s.revealAnswers && ci===q.correct;
-        const ab = mk('div','host-choice');
-        ab.style.background = isCorrect ? 'var(--success-bg)' : 'var(--surface)';
-        ab.style.borderColor = isCorrect ? 'var(--success-strong)' : 'var(--border)';
-        ab.style.color = isCorrect ? 'var(--success)' : 'var(--text)';
-        ab.style.fontWeight = isCorrect ? '600' : '400';
-        const lt = mk('span'); lt.style.fontWeight='600'; lt.textContent = String.fromCharCode(65+ci)+'.'; ab.appendChild(lt);
-        const ct = mk('span'); ct.textContent = c; ab.appendChild(ct);
+        const ab = mk('div');
+        ab.style.cssText = [
+          'display:flex;align-items:center;gap:10px',
+          'padding:9px 14px;border-radius:var(--radius)',
+          'border:1px solid ' + (isCorrect ? 'var(--success-strong)' : 'var(--border)'),
+          'background:' + (isCorrect ? 'var(--success-bg)' : 'var(--surface)'),
+          'color:' + (isCorrect ? 'var(--success)' : 'var(--text)'),
+          'font-weight:' + (isCorrect ? '600' : '400'),
+          'margin-bottom:7px;font-size:14px'
+        ].join(';');
+
+        const lt = mk('span');
+        lt.style.cssText = 'font-weight:700;min-width:22px;flex-shrink:0';
+        lt.textContent = String.fromCharCode(65+ci)+'.';
+        const ct = mk('span'); ct.style.flex='1'; ct.textContent = c;
+        ab.appendChild(lt); ab.appendChild(ct);
+
         if(s.revealAnswers){
           const pct = totalAns ? Math.round(((counts[ci]||0) / totalAns) * 100) : 0;
-          const pctEl = mk('span'); pctEl.style.cssText='margin-left:auto;font-size:13px;color:var(--text-muted)';
-          pctEl.textContent = `${pct}% (${counts[ci]||0})`;
-          ab.appendChild(pctEl);
+          // mini bar + percentage
+          const barWrap = mk('div');
+          barWrap.style.cssText = 'display:flex;align-items:center;gap:6px;flex-shrink:0';
+          const bar = mk('div');
+          bar.style.cssText = `width:60px;height:6px;border-radius:3px;background:var(--surface-1);overflow:hidden`;
+          const fill = mk('div');
+          fill.style.cssText = `height:100%;border-radius:3px;width:${pct}%;background:${isCorrect?'var(--success-strong)':'var(--accent-strong)'};transition:width .4s`;
+          bar.appendChild(fill);
+          const pctLbl = mk('span');
+          pctLbl.style.cssText = 'font-size:12px;color:var(--text-muted);min-width:36px;text-align:right';
+          pctLbl.textContent = `${pct}%`;
+          barWrap.appendChild(bar); barWrap.appendChild(pctLbl);
+          ab.appendChild(barWrap);
         }
-        if(isCorrect){ const ck=mk('span'); ck.style.marginLeft=s.revealAnswers?'8px':'auto'; ck.textContent='✓'; ab.appendChild(ck); }
-        card.appendChild(ab);
+        if(isCorrect){ const ck=mk('span'); ck.style.cssText='font-size:16px;flex-shrink:0'; ck.textContent='✓'; ab.appendChild(ck); }
+        rightCol.appendChild(ab);
       });
-      qd.appendChild(card);
+
+      layout.appendChild(rightCol);
+      qd.appendChild(layout);
     }
+
+    // controls row
     const rv = mk('button'); rv.textContent='Reveal answers'; rv.disabled = s.revealAnswers; rv.onclick=doReveal; ctrl.appendChild(rv);
     const nx = mk('button','pri'); nx.textContent='Next question'; nx.disabled = !s.revealAnswers || (s.currentQ >= getQuestions().length-1); nx.onclick=doNext; ctrl.appendChild(nx);
     const en = mk('button','red'); en.textContent='End quiz'; en.onclick=doEnd; ctrl.appendChild(en);
