@@ -224,9 +224,11 @@ async function createSession(){
 
     const name = (document.getElementById('session-name-input').value||'').trim() || 'Quiz';
     const code = String(Math.floor(100000 + Math.random()*900000));
-    const state = blankLive(code, name);
 
-    await db.ref('sessions/'+code).set(state);
+    // write session metadata to root, waiting state to state subnode
+    await db.ref('sessions/'+code).set({ code, name, created: Date.now() });
+    const waitingState = { status:'waiting', currentQ:-1, answers:{}, participants:{}, revealAnswers:false };
+    await db.ref('sessions/'+code+'/state').set(waitingState);
 
     const mine = JSON.parse(localStorage.getItem('quiz_my_sessions')||'[]');
     mine.unshift({code, name, created: Date.now()});
@@ -245,12 +247,19 @@ async function resumeSession(code){
   const snap = await db.ref('sessions/'+code).get();
   if(!snap.exists()){ showToast('Session not found — it may have expired'); return; }
   openHostSession(code, snap.val());
+  // fetch existing questions if the quiz was previously started
+  try{
+    const qsnap = await db.ref('sessions/'+code+'/questions').get();
+    if(qsnap.exists()) localQs = qsnap.val();
+  } catch(e){ console.warn('Could not load questions', e); }
 }
 
-function openHostSession(code, state){
+function openHostSession(code, rootData){
   sessionCode = code;
-  liveState = state;
-  localQs = state.questions || [];
+  // liveState is built from the state subnode; for a new session that's the waiting state
+  liveState = { status:'waiting', currentQ:-1, answers:{}, participants:{},
+                revealAnswers:false, name: rootData.name||'Quiz', code };
+  localQs = [];
   role = 'host';
   document.getElementById('h-session-name').textContent = state.name;
   document.getElementById('h-code-inline').textContent = code;
@@ -1012,17 +1021,27 @@ function tickTimer(elId, timeLimit, startedAt, onExpire){
 }
 
 // ── QUIZ CONTROL — write to Firebase, listener updates everyone ──────────
+// Questions (with base64 images) go to sessions/{code}/questions — written ONCE.
+// All live control data goes to sessions/{code}/state — tiny, syncs fast.
+
+function stateRef(){ return db.ref('sessions/'+sessionCode+'/state'); }
+function questionsRef(){ return db.ref('sessions/'+sessionCode+'/questions'); }
+
 async function startQuiz(){
-  liveState.questions = JSON.parse(JSON.stringify(localQs));
-  liveState.status = 'active';
-  liveState.currentQ = 0;
-  liveState.answers = {};
-  liveState.revealAnswers = false;
-  liveState.questionStartedAt = Date.now();
+  if(!localQs.length){ alert('Add questions first'); return; }
+  // write questions once — never included in live state syncs again
+  await questionsRef().set(localQs.map(q=>JSON.parse(JSON.stringify(q))));
+  // write lightweight live state
+  const activeState = {
+    status:'active', currentQ:0, answers:{},
+    participants: liveState.participants || {},
+    revealAnswers:false, questionStartedAt:Date.now(),
+    questionCount: localQs.length
+  };
+  await stateRef().set(activeState);
   lastHostTimerQ = -1;
   lastTimerQ = -1;
   autoRevealFiredForQ = -1;
-  await sessionRef.set(liveState);
 }
 
 async function doReveal(){
@@ -1090,13 +1109,13 @@ async function doJoin(){
   if(!code || code.length!==6){ err.textContent='Enter the 6-digit code'; return; }
   if(!name){ err.textContent='Enter your name'; return; }
 
-  // read the session root for name/existence check, then state for participants
   const rootSnap = await db.ref('sessions/'+code).get();
   if(!rootSnap.exists()){ err.textContent='Session not found — check the code'; return; }
   const root = rootSnap.val();
 
   const stateSnap = await db.ref('sessions/'+code+'/state').get();
-  const state = stateSnap.exists() ? stateSnap.val() : {};
+  // state subnode always exists now (written on session creation); fall back gracefully
+  const state = stateSnap.exists() ? stateSnap.val() : { status:'waiting', participants:{} };
   const participants = state.participants || {};
 
   if(Object.keys(participants).length >= 50 && !participants[name]){
@@ -1258,15 +1277,16 @@ function attachSessionListener(code){
 
   sessionListener = async function(snap){
     const s = snap.val();
-    if(!s) return;
+    // s can be null before the quiz starts if state subnode isn't written yet — treat as waiting
+    const incoming = s || { status:'waiting', currentQ:-1, answers:{}, participants:{}, revealAnswers:false };
 
-    // merge incoming state with existing liveState so we keep the questions array
-    liveState = { ...liveState, ...s };
-    liveState.participants = s.participants || {};
-    liveState.answers      = s.answers      || {};
+    // merge incoming state with existing liveState so we preserve the questions array
+    liveState = { ...liveState, ...incoming };
+    liveState.participants = incoming.participants || {};
+    liveState.answers      = incoming.answers      || {};
 
-    // fetch questions once if we don't have them yet (e.g. participant joining mid-quiz)
-    if(!liveState.questions || !liveState.questions.length){
+    // fetch questions once if we don't have them yet (participant joining mid-quiz)
+    if((!liveState.questions || !liveState.questions.length) && incoming.status === 'active'){
       try{
         const qsnap = await db.ref('sessions/'+code+'/questions').get();
         if(qsnap.exists()) liveState.questions = qsnap.val();
