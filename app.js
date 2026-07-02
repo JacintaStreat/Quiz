@@ -366,6 +366,7 @@ function hTab(t){
 
 // ── QUESTION BUILDER ───────────────────────────────────────────────────────
 let dragSrcIndex = null;
+let pendingReorder = false; // true after a drag reorder until the full order is synced to Firebase
 
 function renderQList(){
   const el = document.getElementById('qlist');
@@ -416,7 +417,7 @@ function renderQList(){
       d.classList.remove('drag-over');
       const destIndex = parseInt(d.dataset.index);
       if(dragSrcIndex === null || dragSrcIndex === destIndex) return;
-      // reorder
+      // reorder in memory
       const moved = localQs.splice(dragSrcIndex, 1)[0];
       localQs.splice(destIndex, 0, moved);
       // keep the editor open on the moved question
@@ -426,8 +427,11 @@ function renderQList(){
         else if(dragSrcIndex > selQ && destIndex <= selQ) selQ++;
       }
       dragSrcIndex = null;
+      pendingReorder = true;
       renderQList();
       if(selQ !== null) openEditor(selQ);
+      // sync the new order to Firebase immediately so it's not left stale
+      syncFullQuestionOrder();
     });
 
     el.appendChild(d);
@@ -622,6 +626,27 @@ async function clearImg(i){
   const prev = document.getElementById('img-preview-'+i); if(prev) prev.innerHTML='';
   renderQList();
 }
+// Writes the full localQs array to Firebase in current order.
+// Called after a drag reorder and when saveQ detects a pending reorder.
+async function syncFullQuestionOrder(){
+  if(!currentQuizName || !libraryPassphraseHash) return;
+  try{
+    const key = encodeKey(currentQuizName);
+    const base = `savedQuizzes/${libraryPassphraseHash}/${key}`;
+    // clear and rewrite all questions in the new order atomically
+    await db.ref(`${base}/questions`).remove();
+    const updates = {};
+    localQs.forEach((q, i)=>{
+      updates[`${base}/questions/${i}`] = JSON.parse(JSON.stringify(q));
+    });
+    await db.ref().update(updates);
+    await db.ref(`${base}/meta`).update({ count: localQs.length, saved: new Date().toLocaleString() });
+    pendingReorder = false;
+  } catch(e){
+    console.error('syncFullQuestionOrder failed', e);
+  }
+}
+
 async function saveQ(i){
   const q = localQs[i];
   q.text = (document.getElementById('ed-text')?.value||'').trim();
@@ -637,11 +662,15 @@ async function saveQ(i){
   if(currentQuizName && libraryPassphraseHash){
     if(msg){ msg.textContent='Saving…'; }
     try{
-      const key = encodeKey(currentQuizName);
-      const base = `savedQuizzes/${libraryPassphraseHash}/${key}`;
-      // update meta count and write just this question's node
-      await db.ref(`${base}/meta`).update({ name: currentQuizName, count: localQs.length, saved: new Date().toLocaleString() });
-      await db.ref(`${base}/questions/${i}`).set(JSON.parse(JSON.stringify(q)));
+      if(pendingReorder){
+        // a drag reorder happened — write all questions in new order, not just this one
+        await syncFullQuestionOrder();
+      } else {
+        const key = encodeKey(currentQuizName);
+        const base = `savedQuizzes/${libraryPassphraseHash}/${key}`;
+        await db.ref(`${base}/meta`).update({ name: currentQuizName, count: localQs.length, saved: new Date().toLocaleString() });
+        await db.ref(`${base}/questions/${i}`).set(JSON.parse(JSON.stringify(q)));
+      }
       if(msg){ msg.textContent='Saved!'; setTimeout(()=>{ if(msg) msg.textContent=''; }, 1800); }
     } catch(e){
       console.error('auto-sync failed', e);
@@ -786,6 +815,7 @@ async function doSaveQuiz(){
       closeModal('modal-save');
       showToast('Quiz saved');
       currentQuizName = name;
+      pendingReorder = false;
     } catch(e){
       console.error('doSaveQuiz (shared) failed', e);
       err.textContent = 'Could not save to the shared library: ' + (e.message||e);
