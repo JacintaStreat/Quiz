@@ -777,23 +777,25 @@ async function doSaveQuiz(){
   const saveBtn = document.querySelector('#modal-save button.pri');
   if(saveBtn){ saveBtn.disabled=true; saveBtn.textContent='Saving…'; }
 
-  // migrate any legacy base64 images to Firebase Storage before saving
+  // migrate any legacy base64 images to Firebase Storage in parallel before saving
   if(storage && libraryPassphraseHash){
-    for(let i=0; i<localQs.length; i++){
-      const q = localQs[i];
-      if(q.img && !isStorageUrl(q.img)){
+    const needsMigration = localQs.filter(q => q.img && !isStorageUrl(q.img));
+    if(needsMigration.length){
+      if(saveBtn) saveBtn.textContent = `Uploading ${needsMigration.length} image${needsMigration.length!==1?'s':''}…`;
+      let done = 0;
+      await Promise.all(localQs.map(async (q, i)=>{
+        if(!q.img || isStorageUrl(q.img)) return;
         try{
-          if(saveBtn) saveBtn.textContent = `Uploading image ${i+1}/${localQs.length}…`;
           const blob = await base64ToBlob(q.img);
-          const path = `quiz-images/${Date.now()}-q${i}.jpg`;
+          const path = `quiz-images/${Date.now()}-q${i}-${Math.random().toString(36).slice(2,6)}.jpg`;
           const ref  = storage.ref(path);
           await ref.put(blob);
           q.img     = await ref.getDownloadURL();
           q.imgPath = path;
-        } catch(e){
-          console.warn(`Could not migrate image for question ${i+1}`, e);
-        }
-      }
+          done++;
+          if(saveBtn) saveBtn.textContent = `Uploaded ${done}/${needsMigration.length}…`;
+        } catch(e){ console.warn(`Could not migrate image for question ${i+1}`, e); }
+      }));
     }
   }
 
@@ -1142,22 +1144,27 @@ async function startQuiz(){
   const qd = document.getElementById('r-qdisplay');
   if(qd) qd.innerHTML = '<div class="card"><div style="font-size:16px;font-weight:500">Preparing quiz…</div><p class="sub" style="margin-top:6px">Uploading images and writing questions. This may take a moment.</p></div>';
 
-  // migrate any remaining base64 images to Storage so only tiny URLs
-  // go into Firebase Realtime Database — keeps the payload tiny
+  // migrate any remaining base64 images to Storage in PARALLEL — all uploads
+  // fire simultaneously rather than one-at-a-time, cutting wait time dramatically
   if(storage){
-    for(let i=0; i<localQs.length; i++){
-      const q = localQs[i];
-      if(q.img && !isStorageUrl(q.img)){
+    const needsMigration = localQs.filter(q => q.img && !isStorageUrl(q.img));
+    if(needsMigration.length){
+      if(startBtn) startBtn.textContent = `Uploading ${needsMigration.length} image${needsMigration.length!==1?'s':''}…`;
+
+      let done = 0;
+      await Promise.all(localQs.map(async (q, i)=>{
+        if(!q.img || isStorageUrl(q.img)) return; // already a URL, skip
         try{
-          if(startBtn) startBtn.textContent = `Uploading image ${i+1}/${localQs.length}…`;
           const blob = await base64ToBlob(q.img);
-          const path = `quiz-images/${Date.now()}-q${i}.jpg`;
+          const path = `quiz-images/${Date.now()}-q${i}-${Math.random().toString(36).slice(2,6)}.jpg`;
           const ref  = storage.ref(path);
           await ref.put(blob);
           q.img     = await ref.getDownloadURL();
           q.imgPath = path;
+          done++;
+          if(startBtn) startBtn.textContent = `Uploaded ${done}/${needsMigration.length}…`;
         } catch(e){ console.warn(`Could not migrate image for Q${i+1}`, e); }
-      }
+      }));
     }
   }
 
